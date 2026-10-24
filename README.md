@@ -50,11 +50,10 @@ A stopwatch for timing teams at several distance markers. Drag runners into fini
 
 - **Clock** — runs from when you tap Start race.
 - **Take split** — the big button, labelled like "Take split · 1st runner". Tap it each time a runner crosses the marker. On a computer, the spacebar does the same.
-- **+ Other runner** — tap it each time a runner who is *not* on your list crosses the marker (with **Undo other** for mistakes). Your runners' places then count those runners too, so the slot labels show overall placements while you watch the race. This is only for gauging the race on that phone: it isn't included in Excel, Copy table, Share QR or helper results. Helpers have the same button for their own screen.
 - **Put names in order** — drag **☰** on a name to match who actually crossed. Times stay with the place (1st, 2nd, ...), not with the name.
 - **Edit a time** — tap an underlined time and type a new one (`1:05.30` or `65.3`).
-- **Prediction check** — each runner shows ▲ (finished better than predicted), ▼ (worse), or ✓ (as predicted).
-- **Estimates** — once a split is recorded, each runner shows **Arr** (estimated arrival at the marker you're on) and **Fin** (estimated final time). **~** means based on that runner's own average pace. **≈** means the runner has no split yet, so the group average is used. Estimates update with every split and aren't saved between races.
+- **Estimates** — each runner shows **Arr** (estimated arrival at the marker you're on) and **Fin** (estimated final time), worked out from the gap between their two most recent splits (or start to first split if they only have one). **~** means based on that runner's own splits; **≈** means they have none yet, so it uses the group's average.
+- **Goal times** — on the first screen, type a goal finish time (like 16:49, or 16.49) in the box next to each runner's name; it also shows on the Ready screen. Set the total race distance on the next screen. During the race each runner's row is colored for the marker you're viewing: **red** if they're any amount behind goal pace, **yellow** if they're ahead but close to falling behind (within 2% of the time they should have by that point, so the window grows with distance), and **green** if comfortably ahead. The number is how far behind (+) or ahead (−) of goal they were at that marker, and it doesn't change on earlier markers when later splits come in. A runner who hasn't crossed the current marker yet turns red once the clock passes their goal time for it. Goals are set before the race starts, and saving a team in **Team presets** saves each runner's goal with them.
 - **Marker tabs** — tap a tab to switch markers. A new marker starts with the previous marker's order, so you only fix what changed.
 - **+ Marker** — adds another marker during the race.
 - **Change a marker's distance or unit** — use the boxes under the tabs. The marker's name updates automatically.
@@ -105,7 +104,7 @@ A stopwatch for timing teams at several distance markers. Drag runners into fini
 - **Pick your markers** — choose one or more. You can switch between them while timing.
 - **Take split** — tap it each time a runner passes. Each tap saves the exact time privately; the clock time isn't shown. A **✓** appears next to the place number instead, and every runner after the leader shows how far **behind 1st** they were (the leader shows "Leader").
 - **Drag ☰** to put the names in the order the runners came by. Times stay with the place (1st, 2nd, ...).
-- **Undo last** removes the most recent tap. To delete a mistaken tap in the middle, tap its ✓ and choose **Delete** (later splits move up one place).
+- **Undo last** removes the most recent tap. Helpers can only undo the latest tap; the organizer can fix anything else after importing.
 - **Send to organizer** shows a results QR. The organizer scans it. You can send again after taking more splits.
 - **Change markers** adds or drops markers; **End session** clears this phone's helper times (tap twice).
 - Helper sessions are saved on the phone, so closing the app doesn't lose your taps.
