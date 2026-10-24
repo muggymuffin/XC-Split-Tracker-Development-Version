@@ -91,7 +91,7 @@ summary{cursor:pointer;margin:8px 0}
 <script src="jsQR.js"></script>
 <script>
 const $=s=>document.querySelector(s);
-let S={phase:'setup',order:[],pred:[],marks:[],def:{label:'Marker 1',dist:''},total:'',unit:'mi',markers:[],cur:0,start:0,final:0,raf:0,nid:1,rid:'',epoch:0,flash:'',invRid:'',munit:'mi',tdraft:'',hinv:null,hsel:[],hm:[],hc:0,modal:null,draft:null,goals:{}};
+let S={phase:'setup',raceName:'',order:[],pred:[],marks:[],def:{label:'Marker 1',dist:''},total:'',unit:'mi',markers:[],cur:0,start:0,final:0,raf:0,nid:1,rid:'',epoch:0,flash:'',invRid:'',munit:'mi',tdraft:'',hinv:null,hsel:[],hm:[],hc:0,modal:null,draft:null,goals:{}};
 const M=()=>S.markers[S.cur];
 const mks=()=>S.marks.length?S.marks:[S.def];
 const fmt=ms=>{const t=Math.floor(ms/10),c=t%100,s=Math.floor(t/100)%60,m=Math.floor(t/6000);return m+':'+String(s).padStart(2,'0')+'.'+String(c).padStart(2,'0')};
@@ -220,6 +220,7 @@ function draw0(){
   if(S.phase==='setup'){
     a.innerHTML=`<h1>Race Split Taker</h1>
     ${modeSeg('org')}
+    <label for="racename">Race name</label><input id="racename" value="${esc(S.raceName||'')}" placeholder="e.g. County Championships" autocomplete="off">
     <div class="bar"><button class="s" id="scn">Import splits</button><button class="s" id="hst">Saved races</button></div>
     <div class="bar"><button class="s" id="tms">Team presets</button></div>
     <div class="add"><input id="in" placeholder="Add a name" autocomplete="off"><button class="p" id="addb">Add</button></div>
@@ -228,10 +229,11 @@ function draw0(){
     <h1 style="font-size:16px;margin-top:18px">Markers</h1>
     <p class="hint">Add each point where you’ll take splits by its distance. Markers are named automatically, and each can use miles or kilometers, so you can mix them.</p>
     <div class="add"><input id="mdist" type="number" step="any" min="0" inputmode="decimal" placeholder="Distance"><select id="munit" class="sm"><option value="mi" ${S.munit!=='km'?'selected':''}>mi</option><option value="km" ${S.munit==='km'?'selected':''}>km</option></select><button class="s" id="addmk">Add</button></div>
-    <div class="tabs" style="flex-wrap:wrap">${S.marks.map((k,i)=>`<button class="tab" data-m="${i}">${i+1}. ${esc(k.label)} ×</button>`).join('')}</div>
+    <div class="tabs" style="flex-wrap:wrap">${S.marks.map((k,i)=>`<button class="tab" data-m="${i}">• ${esc(k.label)} ×</button>`).join('')}</div>
     <button class="p" id="go" style="width:100%;margin-top:6px" ${S.order.length<1?'disabled':''}>Continue</button>
     <p class="cr"><button class="lnk" id="crd">Credits &amp; licenses</button></p>`;
     const add=()=>{const v=$('#in').value.trim();if(!v)return;S.order.push({id:S.nid++,name:v});render();$('#in').focus()};
+    $('#racename').oninput=e=>{S.raceName=e.target.value;saveState()};
     $('#addb').onclick=add;$('#in').onkeydown=e=>{if(e.key==='Enter')add()};$('#crd').onclick=()=>{S.modal={type:'credits'};render()};bindSync();$('#hst').onclick=()=>{S.modal={type:'hist'};render()};$('#tms').onclick=()=>{S.modal={type:'teams'};render()};bindSeg();
     a.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{S.order=S.order.filter(p=>p.id!=b.dataset.x);render()});
     a.querySelectorAll('[data-gi]').forEach(i=>{
@@ -372,7 +374,7 @@ function bindSync(){
 function flashUI(){let f=$('#flash');if(!f){f=document.createElement('div');f.id='flash';f.className='flash';document.body.appendChild(f)}f.textContent=S.flash;f.style.display=S.flash?'block':'none'}
 function setFlash(msg){S.flash=msg;flashUI();clearTimeout(setFlash.t);setFlash.t=setTimeout(()=>{S.flash='';flashUI()},3500)}
 function encodeState(){
-  const p={v:1,r:S.rid||'',e:S.epoch,f:Math.round(S.final),ph:S.phase,o:S.order.map(x=>[x.id,x.name]),pd:S.pred,u:S.unit,t:S.total,n:S.nid,ms:S.marks.map(k=>[k.label,k.dist,k.unit||S.unit]),df:S.def.dist,c:S.cur};
+  const p={v:1,r:S.rid||'',rn:S.raceName||'',e:S.epoch,f:Math.round(S.final),ph:S.phase,o:S.order.map(x=>[x.id,x.name]),pd:S.pred,u:S.unit,t:S.total,n:S.nid,ms:S.marks.map(k=>[k.label,k.dist,k.unit||S.unit]),df:S.def.dist,c:S.cur};
   if(S.phase==='race'||S.phase==='done')p.mk=S.markers.map(k=>[k.label,k.dist,k.actual,k.laps.map(x=>x==null?null:Math.round(x)),k.touched?1:0,k.unit||S.unit]);
   return 'RST1:'+JSON.stringify(p).replace(/[\u007f-\uffff]/g,c=>'\\u'+('0000'+c.charCodeAt(0).toString(16)).slice(-4));
 }
@@ -395,7 +397,7 @@ function importCode(txt,scanAt){
     cancelAnimationFrame(S.raf);
     S.order=p.o.map(([id,name])=>({id,name}));S.pred=p.pd||[];S.unit=p.u||'mi';S.total=p.t||'';S.nid=p.n||S.nid;
     S.marks=(p.ms||[]).map(([label,dist,unit])=>({label,dist,unit:unit||S.unit}));S.def={label:'Marker 1',dist:p.df||''};
-    S.rid=p.r||'';S.epoch=p.e||0;
+    S.rid=p.r||'';S.raceName=p.rn||'';S.epoch=p.e||0;
     if(run){S.markers=p.mk.map(([label,dist,actual,laps,touched,unit])=>({label,dist,unit:unit||S.unit,actual,laps,touched:!!touched}));S.cur=Math.min(p.c||0,S.markers.length-1)}
     if(p.ph==='race'){S.phase='race';S.start=performance.now()-(Date.now()-p.e);tick()}
     else if(p.ph==='done'&&run){S.phase='done';S.final=p.f}
@@ -507,22 +509,40 @@ function zipFiles(files){
 }
 function xlsxTable(d){
   const mk=d.markers||[],byid=id=>d.order.find(p=>p.id==id);
-  const tm=(L,id)=>{const i=L.actual.indexOf(id);return i>=0&&L.laps[i]!=null?L.laps[i]:null};
-  let last=-1;mk.forEach((L,j)=>{if(L.laps.some(x=>x!=null))last=j});
-  const base=last>=0?mk[last].actual.slice():[];
+  const tm=(L,id)=>{const i=(L.actual||[]).indexOf(id);return i>=0&&L.laps[i]!=null?L.laps[i]:null};
+  let last=-1;mk.forEach((L,j)=>{if((L.laps||[]).some(x=>x!=null))last=j});
+  const base=last>=0?(mk[last].actual||[]).slice():[];
   d.order.forEach(p=>{if(!base.includes(p.id))base.push(p.id)});
-  const heads=['Name',...mk.map(L=>L.label)];
-  const rows=base.filter(id=>byid(id)).map(id=>[byid(id).name,...mk.map(L=>tm(L,id))]);
-  return{heads,rows};
+  const normUnit=u=>(u||d.unit||'mi')==='km'?'km':'mi';
+  const dist=L=>{const n=Number(L.dist);if(!Number.isFinite(n)||n<=0)return null;return n*(normUnit(L.unit)==='mi'?1:1/1.609344)};
+  const is5k=()=>{const n=Number(d.total);const km=n*(normUnit(d.unit)==='mi'?1.609344:1);return Math.abs(km-5)<=0.08};
+  const has5k=is5k()||mk.some(L=>/\b5\s*k\b|5k final/i.test(String(L.label||'')));
+  const points=mk.map((L,i)=>({L,i,mi:dist(L),unit:normUnit(L.unit),timeFor(id){return tm(L,id)}}));
+  const milePts=points.filter(p=>p.mi!=null&&p.unit==='mi');
+  const kmPts=points.filter(p=>p.mi!=null&&p.unit==='km');
+  const formatPoint=(p,unit)=>p.unit===unit?String(p.L.label||'').trim():(unit==='mi'?(p.mi.toFixed(2).replace(/0+$/,'').replace(/\.$/,'')+' Mile'):(p.mi*1.609344).toFixed(2).replace(/0+$/,'').replace(/\.$/,'')+' km');
+  const unique=(arr)=>arr.filter((p,i)=>arr.findIndex(q=>q.i===p.i)===i);
+  const miles=unique(milePts), kms=unique(kmPts);
+  const labels=(arr,u)=>arr.map(p=>formatPoint(p,u));
+  const heads=['NAME',...labels(miles,'mi'),...labels(miles,'mi').map(x=>'Split: '+x),...(has5k?['AVG/MI']:[]),...labels(kms,'km'),...labels(kms,'km').map(x=>'Split: '+x),...(kms.length?['Avg/K']:[])];
+  const rows=base.filter(id=>byid(id)).map(id=>{
+    const mileTimes=miles.map(p=>p.timeFor(id)), kmTimes=kms.map(p=>p.timeFor(id));
+    const split=(vals)=>vals.map((v,i)=>v==null?null:(i===0?v:(vals[i-1]==null?null:v-vals[i-1])));
+    const fin=has5k?(()=>{for(let i=points.length-1;i>=0;i--){const v=points[i].timeFor(id);if(v!=null)return v}return null})():null;
+    const avgMi=has5k&&fin!=null?fin/3.1:null;
+    const avgKm=kms.length&&kmTimes.some(v=>v!=null)?(kmTimes.filter(v=>v!=null).slice(-1)[0]/(Number(kms.filter(p=>p.timeFor(id)!=null).slice(-1)[0]?.mi||0)*1.609344||5)):null;
+    return [byid(id).name,...mileTimes,...split(mileTimes),...(has5k?[avgMi]:[]),...kmTimes,...split(kmTimes),...(kms.length?[avgKm]:[])];
+  });
+  return {title:String(d.raceName||d.name||d.title||'Race Results'),heads,rows};
 }
 function xlsxBytes(d){
-  const {heads,rows}=xlsxTable(d);
-  const X=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const {title,heads,rows}=xlsxTable({...d,raceName:d.raceName||d.rn||''});
+  const X=s=>String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const col=i=>{let s='';i++;while(i>0){const m=(i-1)%26;s=String.fromCharCode(65+m)+s;i=Math.floor((i-1)/26)}return s};
-  const wid=heads.map((h,i)=>i?Math.max(12,h.length+3):Math.max(12,h.length,...rows.map(r=>String(r[0]).length))+4);
+  const wid=heads.map((h,i)=>i?Math.max(12,h.length+3):Math.max(18,h.length,...rows.map(r=>String(r[0]).length))+4);
   const cs=(r,c,v,st)=>`<c r="${col(c)}${r}" s="${st}" t="inlineStr"><is><t xml:space="preserve">${X(v)}</t></is></c>`;
-  let sd=`<row r="1">${heads.map((h,c)=>cs(1,c,h,1)).join('')}</row>`;
-  rows.forEach((r,i)=>{sd+=`<row r="${i+2}">`+r.map((v,c)=>c===0?cs(i+2,c,v,1):v==null?'':`<c r="${col(c)}${i+2}" s="2"><v>${Math.round(v/10)*10/86400000}</v></c>`).join('')+'</row>'});
+  let sd=`<row r="1">${cs(1,0,title,1)}</row><row r="2">${heads.map((h,c)=>cs(2,c,h,1)).join('')}</row>`;
+  rows.forEach((r,i)=>{sd+=`<row r="${i+3}">`+r.map((v,c)=>c===0?cs(i+3,c,v,0):v==null?'':`<c r="${col(c)}${i+3}" s="2"><v>${Math.round(v/10)*10/86400000}</v></c>`).join('')+'</row>'});
   const H='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n',NS='xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"',RN='http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   return zipFiles([
    {name:'[Content_Types].xml',text:H+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'},
@@ -530,7 +550,7 @@ function xlsxBytes(d){
    {name:'xl/workbook.xml',text:H+'<workbook '+NS+' xmlns:r="'+RN+'"><sheets><sheet name="Results" sheetId="1" r:id="rId1"/></sheets></workbook>'},
    {name:'xl/_rels/workbook.xml.rels',text:H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="'+RN+'/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="'+RN+'/styles" Target="styles.xml"/></Relationships>'},
    {name:'xl/styles.xml',text:H+'<styleSheet '+NS+'><numFmts count="1"><numFmt numFmtId="164" formatCode="[m]:ss.00"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'},
-   {name:'xl/worksheets/sheet1.xml',text:H+'<worksheet '+NS+'><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+wid.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('')+'</cols><sheetData>'+sd+'</sheetData></worksheet>'}
+   {name:'xl/worksheets/sheet1.xml',text:H+'<worksheet '+NS+'><sheetViews><sheetView workbookViewId="0"><pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+wid.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('')+'</cols><sheetData>'+sd+'</sheetData></worksheet>'}
   ]);
 }
 /*XLSX-END*/
@@ -553,7 +573,7 @@ function copyTable(d){
 }
 const getHist=()=>{try{return JSON.parse(localStorage.getItem('rst-history-v1')||'[]')}catch(e){return[]}};
 const histTitle=e=>new Date(e.epoch||e.saved).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+' · '+e.order.length+' runners';
-const snapOf=()=>({phase:S.phase,order:S.order,pred:S.pred,marks:S.marks,def:S.def,total:S.total,unit:S.unit,markers:S.markers,cur:S.cur,final:S.final,nid:S.nid,rid:S.rid,epoch:S.epoch,invRid:S.invRid,hinv:S.hinv,hsel:S.hsel,hm:S.hm,hc:S.hc,goals:S.goals,saved:Date.now()});
+const snapOf=()=>({phase:S.phase,raceName:S.raceName||'',order:S.order,pred:S.pred,marks:S.marks,def:S.def,total:S.total,unit:S.unit,markers:S.markers,cur:S.cur,final:S.final,nid:S.nid,rid:S.rid,epoch:S.epoch,invRid:S.invRid,hinv:S.hinv,hsel:S.hsel,hm:S.hm,hc:S.hc,goals:S.goals,saved:Date.now()});
 function saveState(){
   if(!SAVE_OK)return;
   try{
@@ -567,7 +587,7 @@ function saveState(){
 }
 function loadSnap(o){
   cancelAnimationFrame(S.raf);
-  Object.assign(S,{phase:o.phase,order:o.order||[],pred:o.pred||[],marks:o.marks||[],def:o.def||{label:'Marker 1',dist:''},total:o.total||'',unit:o.unit||'mi',goals:o.goals||{},markers:o.markers||[],cur:Math.min(o.cur||0,Math.max(0,(o.markers||[]).length-1)),final:o.final||0,nid:o.nid||1,rid:o.rid||'',epoch:o.epoch||0,invRid:o.invRid||'',hinv:o.hinv||null,hsel:o.hsel||[],hm:o.hm||[],hc:o.hc||0,modal:null});
+  Object.assign(S,{phase:o.phase,raceName:o.raceName||'',order:o.order||[],pred:o.pred||[],marks:o.marks||[],def:o.def||{label:'Marker 1',dist:''},total:o.total||'',unit:o.unit||'mi',goals:o.goals||{},markers:o.markers||[],cur:Math.min(o.cur||0,Math.max(0,(o.markers||[]).length-1)),final:o.final||0,nid:o.nid||1,rid:o.rid||'',epoch:o.epoch||0,invRid:o.invRid||'',hinv:o.hinv||null,hsel:o.hsel||[],hm:o.hm||[],hc:o.hc||0,modal:null});
   if(S.phase==='race')S.start=performance.now()-(Date.now()-S.epoch);
 }
 let SAVE_OK=false;
@@ -588,7 +608,7 @@ function resumeModal(el){
     const b=$('#dr');
     if(b.dataset.sure!=='1'){b.dataset.sure='1';b.textContent='Tap again to discard';return}
     S.pending=null;S.modal=null;
-    Object.assign(S,{phase:'setup',order:o.order||[],pred:[],marks:o.marks||[],def:o.def||{label:'Marker 1',dist:''},total:o.total||'',unit:o.unit||'mi',goals:o.goals||{},markers:[],cur:0,nid:o.nid||1,rid:'',epoch:0,final:0});
+    Object.assign(S,{phase:'setup',raceName:o.raceName||'',order:o.order||[],pred:[],marks:o.marks||[],def:o.def||{label:'Marker 1',dist:''},total:o.total||'',unit:o.unit||'mi',goals:o.goals||{},markers:[],cur:0,nid:o.nid||1,rid:'',epoch:0,final:0});
     SAVE_OK=true;render();setFlash('Race discarded — names kept');
   };
 }
