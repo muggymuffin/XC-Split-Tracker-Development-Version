@@ -516,40 +516,137 @@ function xlsxTable(d){
   const normUnit=u=>(u||d.unit||'mi')==='km'?'km':'mi';
   const dist=L=>{const n=Number(L.dist);if(!Number.isFinite(n)||n<=0)return null;return n*(normUnit(L.unit)==='mi'?1:1/1.609344)};
   const is5k=()=>{const n=Number(d.total);const km=n*(normUnit(d.unit)==='mi'?1.609344:1);return Math.abs(km-5)<=0.08};
-  const has5k=is5k()||mk.some(L=>/\b5\s*k\b|5k final/i.test(String(L.label||'')));
   const points=mk.map((L,i)=>({L,i,mi:dist(L),unit:normUnit(L.unit),timeFor(id){return tm(L,id)}}));
+  const timedPoints=points.filter(p=>p.mi!=null);
+  const finish=(()=>{for(let i=points.length-1;i>=0;i--){const p=points[i];if(p.mi!=null&&p.timeFor(base.find(id=>p.timeFor(id)!=null))!=null)return p}return points.filter(p=>p.mi!=null).slice(-1)[0]||null})();
+  const finalIs5k=!!finish&&Math.abs(finish.mi-5/1.609344)<=0.025;
+  const raceIs5k=is5k()||finalIs5k;
+  // Keep genuine checkpoint columns. If the finish is recorded as 5 km and a real 3 Mile
+  // checkpoint exists, add only a derived Split: 3.1 Mile column (5 km minus 3 Mile).
+  // Do not create a fake 3.1 Mile cumulative checkpoint.
   const milePts=points.filter(p=>p.mi!=null&&p.unit==='mi');
   const kmPts=points.filter(p=>p.mi!=null&&p.unit==='km');
+  const real31=milePts.some(p=>Math.abs(p.mi-3.1)<0.025);
+  const threeMile=milePts.some(p=>Math.abs(p.mi-3)<0.025);
+  const has5kCheckpoint=kmPts.some(p=>Math.abs(p.mi-5/1.609344)<=0.025);
+  const edge31=!!(raceIs5k&&has5kCheckpoint&&!real31&&threeMile);
   const formatPoint=(p,unit)=>p.unit===unit?String(p.L.label||'').trim():(unit==='mi'?(p.mi.toFixed(2).replace(/0+$/,'').replace(/\.$/,'')+' Mile'):(p.mi*1.609344).toFixed(2).replace(/0+$/,'').replace(/\.$/,'')+' km');
-  const unique=(arr)=>arr.filter((p,i)=>arr.findIndex(q=>q.i===p.i)===i);
+  const unique=arr=>arr.filter((p,i)=>arr.findIndex(q=>q.i===p.i)===i);
   const miles=unique(milePts), kms=unique(kmPts);
   const labels=(arr,u)=>arr.map(p=>formatPoint(p,u));
-  const heads=['NAME',...labels(miles,'mi'),...labels(miles,'mi').map(x=>'Split: '+x),...(has5k?['AVG/MI']:[]),...labels(kms,'km'),...labels(kms,'km').map(x=>'Split: '+x),...(kms.length?['Avg/K']:[])];
+  const heads=['NAME',...labels(miles,'mi'),...labels(miles,'mi').map(x=>'Split: '+x),...(edge31?['Split: 3.1 Mile']:[]),...(raceIs5k?['AVG/MI']:[]),...labels(kms,'km'),...labels(kms,'km').map(x=>'Split: '+x),...(kms.length?['Avg/K']:[])];
   const rows=base.filter(id=>byid(id)).map(id=>{
     const mileTimes=miles.map(p=>p.timeFor(id)), kmTimes=kms.map(p=>p.timeFor(id));
-    const split=(vals)=>vals.map((v,i)=>v==null?null:(i===0?v:(vals[i-1]==null?null:v-vals[i-1])));
-    const fin=has5k?(()=>{for(let i=points.length-1;i>=0;i--){const v=points[i].timeFor(id);if(v!=null)return v}return null})():null;
-    const avgMi=has5k&&fin!=null?fin/3.1:null;
-    const avgKm=kms.length&&kmTimes.some(v=>v!=null)?(kmTimes.filter(v=>v!=null).slice(-1)[0]/(Number(kms.filter(p=>p.timeFor(id)!=null).slice(-1)[0]?.mi||0)*1.609344||5)):null;
-    return [byid(id).name,...mileTimes,...split(mileTimes),...(has5k?[avgMi]:[]),...kmTimes,...split(kmTimes),...(kms.length?[avgKm]:[])];
+    // Only the race's first checkpoint can use start -> first as its split.
+    // Other unit groups must have a prior checkpoint in that same unit; never
+    // invent a 3-mile split when the race only recorded a single mile marker.
+    const split=(vals,arr)=>vals.map((v,i)=>v==null?null:(i===0?(arr[i].i===0?v:null):(vals[i-1]==null?null:v-vals[i-1])));
+    const fin=raceIs5k&&finish?finish.timeFor(id):null;
+    const avgMi=fin!=null?fin/3.1:null;
+    const kmLastIndex=kmTimes.reduce((a,v,i)=>v!=null?i:a,-1);
+    const kmDist=kmLastIndex>=0?kms[kmLastIndex].mi*1.609344:0;
+    const avgKm=kmLastIndex>=0&&kmDist>0?kmTimes[kmLastIndex]/kmDist:null;
+    return [byid(id).name,...mileTimes,...split(mileTimes,miles),...(edge31?[null]:[]),...(raceIs5k?[avgMi]:[]),...kmTimes,...split(kmTimes,kms),...(kms.length?[avgKm]:[])];
   });
-  return {title:String(d.raceName||d.name||d.title||'Race Results'),heads,rows};
+  // Keep split columns whenever the checkpoint structure permits a formula,
+  // even if times are currently missing. Do not create a split for the first
+  // checkpoint of a unit group unless it is also the race's first checkpoint.
+  const splitPossible=new Set();
+  [[miles,'mi'],[kms,'km']].forEach(([arr])=>arr.forEach((p,i)=>{if(i>0||p.i===0)splitPossible.add('Split: '+formatPoint(p,arr===miles?'mi':'km'))}));
+  const keep=heads.map((h,i)=>{
+    if(edge31&&h==='Split: 3.1 Mile')return true; // derived last 0.1-mile split, not a cumulative checkpoint
+    return !/^Split:/.test(h)||splitPossible.has(h);
+  });
+  const finalHeads=heads.filter((h,i)=>keep[i]);
+  const finalRows=rows.map(r=>r.filter((v,i)=>keep[i]));
+  return {title:String(d.raceName||d.name||d.title||'Race Results'),heads:finalHeads,rows:finalRows,finishHeader:finish?formatPoint(finish,finish.unit):null};
 }
 function xlsxBytes(d){
-  const {title,heads,rows}=xlsxTable({...d,raceName:d.raceName||d.rn||''});
+  const {title,heads,rows,finishHeader}=xlsxTable({...d,raceName:d.raceName||d.rn||''});
   const X=s=>String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const col=i=>{let s='';i++;while(i>0){const m=(i-1)%26;s=String.fromCharCode(65+m)+s;i=Math.floor((i-1)/26)}return s};
   const wid=heads.map((h,i)=>i?Math.max(12,h.length+3):Math.max(18,h.length,...rows.map(r=>String(r[0]).length))+4);
   const cs=(r,c,v,st)=>`<c r="${col(c)}${r}" s="${st}" t="inlineStr"><is><t xml:space="preserve">${X(v)}</t></is></c>`;
-  let sd=`<row r="1">${cs(1,0,title,1)}</row><row r="2">${heads.map((h,c)=>cs(2,c,h,1)).join('')}</row>`;
-  rows.forEach((r,i)=>{sd+=`<row r="${i+3}">`+r.map((v,c)=>c===0?cs(i+3,c,v,0):v==null?'':`<c r="${col(c)}${i+3}" s="2"><v>${Math.round(v/10)*10/86400000}</v></c>`).join('')+'</row>'});
+  const styleForHead=(h,c)=>1;
+  const splitFormula=(h,rowNum)=>{
+    const target=h.slice(7).trim();
+    // Special 5 km finish split: explicitly bind Split: 3.1 Mile to the real 3 Mile
+    // and 5 km cumulative columns. This is a split-only column, never a fake checkpoint.
+    if(/^3\.1\s*Mile$/i.test(target)){
+      const distanceOf=label=>{
+        const text=String(label).trim();
+        // Exported labels can preserve custom names such as "5k Final" rather than "5 km".
+        // Recognize 5K explicitly so the derived Split: 3.1 Mile formula binds to that column.
+        if(/\b5\s*k\b/i.test(text))return 5/1.609344;
+        const m=text.match(/([0-9]+(?:\.[0-9]+)?)/);if(!m)return null;
+        const n=Number(m[1]);if(!Number.isFinite(n))return null;
+        if(/\bkm\b/i.test(text))return n/1.609344;
+        if(/\bmi\b|mile/i.test(text))return n;
+        return null;
+      };
+      const finishCol=heads.findIndex(x=>!/^Split:/i.test(x)&&Math.abs((distanceOf(x)??-99)-5/1.609344)<0.03);
+      const priorCol=heads.findIndex(x=>!/^Split:/i.test(x)&&Math.abs((distanceOf(x)??-99)-3)<0.03);
+      if(finishCol>=0&&priorCol>=0)return `IF(OR(${col(priorCol)}${rowNum}="",${col(finishCol)}${rowNum}=""),"",${col(finishCol)}${rowNum}-${col(priorCol)}${rowNum})`;
+      return null;
+    }
+    const splitAt=heads.findIndex(x=>x==='Split: '+target);
+    const cumulative=heads.map((x,i)=>({x,i})).filter(o=>o.i>0&&!/^Split:/.test(o.x)&&o.x!=='AVG/MI'&&o.x!=='Avg/K'&&o.x!=='NAME');
+    const ti=cumulative.findIndex(o=>o.x===target);
+    if(ti<0)return null;
+    const targetCol=cumulative[ti].i;
+    // Checkpoint columns are grouped by unit; AVG/MI separates mile and km groups.
+    const mileGroup=heads.indexOf('AVG/MI')<0?true:targetCol<heads.indexOf('AVG/MI');
+    const sameGroup=cumulative.filter(o=>(heads.indexOf('AVG/MI')<0||((o.i<heads.indexOf('AVG/MI'))===mileGroup))&&o.i<targetCol);
+    const prev=sameGroup.length?sameGroup[sameGroup.length-1]:null;
+    const a=col(targetCol)+rowNum;
+    if(!prev)return `IF(${a}="","",${a})`;
+    const b=col(prev.i)+rowNum;
+    return `IF(OR(${b}="",${a}=""),"",${a}-${b})`;
+  };
+  let sd=`<row r="1">${cs(1,0,title,2)}</row><row r="2">${heads.map((h,c)=>cs(2,c,h,styleForHead(h,c))).join('')}</row>`;
+  rows.forEach((r,i)=>{const rn=i+3;sd+=`<row r="${rn}">`+r.map((v,c)=>{if(c===0)return cs(rn,c,v,0);const h=heads[c],isFinishTime=!/^Split:/i.test(h)&&h===finishHeader,st=/^Split:/i.test(h)?6:(isFinishTime||h==='AVG/MI'||h==='Avg/K'?7:5);let formula=null;
+    if(/^Split:/.test(h))formula=splitFormula(h,rn);
+    // Averages use the furthest checkpoint that actually has a time, rather
+    // than requiring the nominal finish checkpoint to be present.
+    const checkpointDistance=(label)=>{
+      const text=String(label);
+      if(/\b5\s*k\b/i.test(text))return {km:5,mi:3.1};
+      const m=text.match(/([0-9]+(?:\.[0-9]+)?)/);if(!m)return null;
+      const n=Number(m[1]);if(!Number.isFinite(n)||n<=0)return null;
+      if(/km/i.test(text))return {km:n,mi:(Math.abs(n-5)<0.001?3.1:n/1.609344)};
+      return /mi|mile/i.test(text)?{km:n*1.609344,mi:n}:null;
+    };
+    if(h==='AVG/MI'||h==='Avg/K'){
+      const unit=h==='Avg/K'?'km':'mi';
+      const candidates=heads.map((x,j)=>({x,j,d:checkpointDistance(x)}))
+        .filter(o=>o.j>0&&!/^Split:/.test(o.x)&&o.x!=='AVG/MI'&&o.x!=='Avg/K'&&o.x!=='NAME'&&o.d)
+        .sort((a,b)=>a.d[unit]-b.d[unit]);
+      let expr='""';
+      for(const q of candidates){const qref=col(q.j)+rn,dist=q.d[unit];expr=`IF(${qref}<>"",${qref}/${dist},${expr})`;}
+      if(candidates.length)formula=expr;
+    }
+    if(formula){
+      // Store the computed result next to the formula so viewers that never recalculate
+      // (Protected View, previews, Files/Mail quick look) still show numbers.
+      const cv=ref=>{const m=ref.match(/^([A-Z]+)(\d+)$/);let ci=0;for(const ch of m[1])ci=ci*26+ch.charCodeAt(0)-64;ci--;const x=rows[Number(m[2])-3][ci];return x==null?'':Math.round(x/10)*10/86400000};
+      let cached='';
+      try{
+        const js=formula.replace(/([A-Z]+\d+)/g,'V("$1")').replace(/<>/g,'!==').replace(/(^|[^!=])=/g,'$1===');
+        cached=new Function('V','IF','OR','return '+js)(cv,(a,b,c2)=>a?b:c2,(...a)=>a.some(Boolean));
+      }catch(e){cached=''}
+      if(typeof cached==='number'&&Number.isFinite(cached))return `<c r="${col(c)}${rn}" s="${st}"><f>${X(formula)}</f><v>${cached}</v></c>`;
+      return `<c r="${col(c)}${rn}" s="${st}" t="str"><f>${X(formula)}</f><v></v></c>`;
+    }
+    if(v==null)return `<c r="${col(c)}${rn}" s="${st}"/>`;
+    return `<c r="${col(c)}${rn}" s="${st}"><v>${Math.round(v/10)*10/86400000}</v></c>`
+  }).join('')+'</row>'});
   const H='<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n',NS='xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"',RN='http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   return zipFiles([
    {name:'[Content_Types].xml',text:H+'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'},
    {name:'_rels/.rels',text:H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="'+RN+'/officeDocument" Target="xl/workbook.xml"/></Relationships>'},
-   {name:'xl/workbook.xml',text:H+'<workbook '+NS+' xmlns:r="'+RN+'"><sheets><sheet name="Results" sheetId="1" r:id="rId1"/></sheets></workbook>'},
+   {name:'xl/workbook.xml',text:H+'<workbook '+NS+' xmlns:r="'+RN+'"><sheets><sheet name="Results" sheetId="1" r:id="rId1"/></sheets><calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/></workbook>'},
    {name:'xl/_rels/workbook.xml.rels',text:H+'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="'+RN+'/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="'+RN+'/styles" Target="styles.xml"/></Relationships>'},
-   {name:'xl/styles.xml',text:H+'<styleSheet '+NS+'><numFmts count="1"><numFmt numFmtId="164" formatCode="[m]:ss.00"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'},
+   {name:'xl/styles.xml',text:H+'<styleSheet '+NS+'><numFmts count="1"><numFmt numFmtId="164" formatCode="[m]:ss.00"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor theme="8" tint="0.7999816888943144"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor theme="5" tint="0.7999816888943144"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor theme="9" tint="0.7999816888943144"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFB0B0B0"/></bottom><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1"/><xf numFmtId="0" fontId="1" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="1" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1"/><xf numFmtId="164" fontId="0" fillId="3" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1"/><xf numFmtId="164" fontId="0" fillId="4" borderId="1" xfId="0" applyNumberFormat="1" applyFill="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'},
    {name:'xl/worksheets/sheet1.xml',text:H+'<worksheet '+NS+'><sheetViews><sheetView workbookViewId="0"><pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>'+wid.map((w,i)=>`<col min="${i+1}" max="${i+1}" width="${w}" customWidth="1"/>`).join('')+'</cols><sheetData>'+sd+'</sheetData></worksheet>'}
   ]);
 }
