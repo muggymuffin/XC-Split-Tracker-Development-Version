@@ -381,7 +381,7 @@ function encodeState(){
 function importCode(txt,scanAt){
   let p;
   try{txt=String(txt).trim();if(!txt.startsWith('RST1:'))return false;p=JSON.parse(txt.slice(5));if(p.k==='inv')return importInvite(p,scanAt);if(p.k==='res')return importResult(p,scanAt);if(!Array.isArray(p.o))return false}catch(e){return false}
-  const run=(p.ph==='race'||p.ph==='done')&&Array.isArray(p.mk);
+  const run=(p.ph==='race'||p.ph==='done')&&Array.isArray(p.mk)&&p.mk.length>0&&p.mk.every(x=>Array.isArray(x)&&Array.isArray(x[2])&&Array.isArray(x[3]));
   const same=run&&p.r&&p.r===S.rid&&(S.phase==='race'||S.phase==='done');
   if(same){
     p.o.forEach(([id,name])=>{if(!byId(id))S.order.push({id,name})});
@@ -399,10 +399,10 @@ function importCode(txt,scanAt){
     S.marks=(p.ms||[]).map(([label,dist,unit])=>({label,dist,unit:unit||S.unit}));S.def={label:'Marker 1',dist:p.df||''};
     S.rid=p.r||'';S.raceName=p.rn||'';S.epoch=p.e||0;
     if(run){S.markers=p.mk.map(([label,dist,actual,laps,touched,unit])=>({label,dist,unit:unit||S.unit,actual,laps,touched:!!touched}));S.cur=Math.min(p.c||0,S.markers.length-1)}
-    if(p.ph==='race'){S.phase='race';S.start=performance.now()-(Date.now()-p.e);tick()}
+    if(p.ph==='race'&&run){S.phase='race';S.start=performance.now()-(Date.now()-p.e);tick()}
     else if(p.ph==='done'&&run){S.phase='done';S.final=p.f}
     else S.phase='ready';
-    setFlash(p.ph==='race'?'Joined race — clock synced':'Race loaded');
+    setFlash(p.ph==='race'&&run?'Joined race — clock synced':'Race loaded');
   }
   S.modal=null;render();return true;
 }
@@ -510,7 +510,11 @@ function zipFiles(files){
 function xlsxTable(d){
   const mk=d.markers||[],byid=id=>d.order.find(p=>p.id==id);
   const tm=(L,id)=>{const i=(L.actual||[]).indexOf(id);return i>=0&&L.laps[i]!=null?L.laps[i]:null};
-  let last=-1;mk.forEach((L,j)=>{if((L.laps||[]).some(x=>x!=null))last=j});
+  const hasDist=L=>{const n=Number(L.dist);return Number.isFinite(n)&&n>0};
+  // Rows follow the finishing order at the furthest marker (by distance, any unit) that has at least one time.
+  let last=-1,bestKm=-1;
+  mk.forEach((L,j)=>{if(hasDist(L)&&(L.laps||[]).some(x=>x!=null)){const km=Number(L.dist)*((L.unit||d.unit||'mi')==='km'?1:1.609344);if(km>=bestKm){bestKm=km;last=j}}});
+  if(last<0)mk.forEach((L,j)=>{if((L.laps||[]).some(x=>x!=null))last=j});
   const base=last>=0?(mk[last].actual||[]).slice():[];
   d.order.forEach(p=>{if(!base.includes(p.id))base.push(p.id)});
   const normUnit=u=>(u||d.unit||'mi')==='km'?'km':'mi';
@@ -518,14 +522,17 @@ function xlsxTable(d){
   const is5k=()=>{const n=Number(d.total);const km=n*(normUnit(d.unit)==='mi'?1.609344:1);return Math.abs(km-5)<=0.08};
   const points=mk.map((L,i)=>({L,i,mi:dist(L),unit:normUnit(L.unit),timeFor(id){return tm(L,id)}}));
   const timedPoints=points.filter(p=>p.mi!=null);
-  const finish=(()=>{for(let i=points.length-1;i>=0;i--){const p=points[i];if(p.mi!=null&&p.timeFor(base.find(id=>p.timeFor(id)!=null))!=null)return p}return points.filter(p=>p.mi!=null).slice(-1)[0]||null})();
+  // Columns run by distance (nearest first), whatever order the markers were added in, so splits are always later minus earlier.
+  const byDist=timedPoints.slice().sort((a,b)=>a.mi-b.mi||a.i-b.i);
+  const firstI=byDist.length?byDist[0].i:0;
+  const finish=(()=>{for(let i=byDist.length-1;i>=0;i--){const p=byDist[i];if(p.mi!=null&&p.timeFor(base.find(id=>p.timeFor(id)!=null))!=null)return p}return byDist.slice(-1)[0]||null})();
   const finalIs5k=!!finish&&Math.abs(finish.mi-5/1.609344)<=0.025;
   const raceIs5k=is5k()||finalIs5k;
   // Keep genuine checkpoint columns. If the finish is recorded as 5 km and a real 3 Mile
   // checkpoint exists, add only a derived Split: 3.1 Mile column (5 km minus 3 Mile).
   // Do not create a fake 3.1 Mile cumulative checkpoint.
-  const milePts=points.filter(p=>p.mi!=null&&p.unit==='mi');
-  const kmPts=points.filter(p=>p.mi!=null&&p.unit==='km');
+  const milePts=byDist.filter(p=>p.unit==='mi');
+  const kmPts=byDist.filter(p=>p.unit==='km');
   const real31=milePts.some(p=>Math.abs(p.mi-3.1)<0.025);
   const threeMile=milePts.some(p=>Math.abs(p.mi-3)<0.025);
   const has5kCheckpoint=kmPts.some(p=>Math.abs(p.mi-5/1.609344)<=0.025);
@@ -540,7 +547,7 @@ function xlsxTable(d){
     // Only the race's first checkpoint can use start -> first as its split.
     // Other unit groups must have a prior checkpoint in that same unit; never
     // invent a 3-mile split when the race only recorded a single mile marker.
-    const split=(vals,arr)=>vals.map((v,i)=>v==null?null:(i===0?(arr[i].i===0?v:null):(vals[i-1]==null?null:v-vals[i-1])));
+    const split=(vals,arr)=>vals.map((v,i)=>v==null?null:(i===0?(arr[i].i===firstI?v:null):(vals[i-1]==null?null:v-vals[i-1])));
     const fin=raceIs5k&&finish?finish.timeFor(id):null;
     const avgMi=fin!=null?fin/3.1:null;
     const kmLastIndex=kmTimes.reduce((a,v,i)=>v!=null?i:a,-1);
@@ -552,17 +559,22 @@ function xlsxTable(d){
   // even if times are currently missing. Do not create a split for the first
   // checkpoint of a unit group unless it is also the race's first checkpoint.
   const splitPossible=new Set();
-  [[miles,'mi'],[kms,'km']].forEach(([arr])=>arr.forEach((p,i)=>{if(i>0||p.i===0)splitPossible.add('Split: '+formatPoint(p,arr===miles?'mi':'km'))}));
+  [[miles,'mi'],[kms,'km']].forEach(([arr])=>arr.forEach((p,i)=>{if(i>0||p.i===firstI)splitPossible.add('Split: '+formatPoint(p,arr===miles?'mi':'km'))}));
   const keep=heads.map((h,i)=>{
     if(edge31&&h==='Split: 3.1 Mile')return true; // derived last 0.1-mile split, not a cumulative checkpoint
     return !/^Split:/.test(h)||splitPossible.has(h);
   });
   const finalHeads=heads.filter((h,i)=>keep[i]);
-  const finalRows=rows.map(r=>r.filter((v,i)=>keep[i]));
-  return {title:String(d.raceName||d.name||d.title||'Race Results'),heads:finalHeads,rows:finalRows,finishHeader:finish?formatPoint(finish,finish.unit):null};
+  const ids=base.filter(id=>byid(id));
+  // Markers with no distance can't get splits or paces, but they still get a plain time column at the end (empty if nothing was timed), so times can be added later.
+  const plainPts=points.filter(p=>p.mi==null);
+  const plainStart=finalHeads.length;
+  const plainHeads=plainPts.map(p=>String(p.L.label||'').trim()||('Marker '+(p.i+1)));
+  const finalRows=rows.map((r,ri)=>[...r.filter((v,i)=>keep[i]),...plainPts.map(p=>p.timeFor(ids[ri]))]);
+  return {title:String(d.raceName||d.name||d.title||'Race Results'),heads:[...finalHeads,...plainHeads],rows:finalRows,plainStart,finishHeader:finish?formatPoint(finish,finish.unit):null};
 }
 function xlsxBytes(d){
-  const {title,heads,rows,finishHeader}=xlsxTable({...d,raceName:d.raceName||d.rn||''});
+  const {title,heads,rows,finishHeader,plainStart}=xlsxTable({...d,raceName:d.raceName||d.rn||''});
   const X=s=>String(s).replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const col=i=>{let s='';i++;while(i>0){const m=(i-1)%26;s=String.fromCharCode(65+m)+s;i=Math.floor((i-1)/26)}return s};
   const wid=heads.map((h,i)=>i?Math.max(12,h.length+3):Math.max(18,h.length,...rows.map(r=>String(r[0]).length))+4);
@@ -590,7 +602,7 @@ function xlsxBytes(d){
       return null;
     }
     const splitAt=heads.findIndex(x=>x==='Split: '+target);
-    const cumulative=heads.map((x,i)=>({x,i})).filter(o=>o.i>0&&!/^Split:/.test(o.x)&&o.x!=='AVG/MI'&&o.x!=='Avg/K'&&o.x!=='NAME');
+    const cumulative=heads.map((x,i)=>({x,i})).filter(o=>o.i>0&&o.i<plainStart&&!/^Split:/.test(o.x)&&o.x!=='AVG/MI'&&o.x!=='Avg/K'&&o.x!=='NAME');
     const ti=cumulative.findIndex(o=>o.x===target);
     if(ti<0)return null;
     const targetCol=cumulative[ti].i;
@@ -619,7 +631,7 @@ function xlsxBytes(d){
     if(h==='AVG/MI'||h==='Avg/K'){
       const unit=h==='Avg/K'?'km':'mi';
       const candidates=heads.map((x,j)=>({x,j,d:checkpointDistance(x)}))
-        .filter(o=>o.j>0&&!/^Split:/.test(o.x)&&o.x!=='AVG/MI'&&o.x!=='Avg/K'&&o.x!=='NAME'&&o.d)
+        .filter(o=>o.j>0&&o.j<plainStart&&!/^Split:/.test(o.x)&&o.x!=='AVG/MI'&&o.x!=='Avg/K'&&o.x!=='NAME'&&o.d)
         .sort((a,b)=>a.d[unit]-b.d[unit]);
       let expr='""';
       for(const q of candidates){const qref=col(q.j)+rn,dist=q.d[unit];expr=`IF(${qref}<>"",${qref}/${dist},${expr})`;}
