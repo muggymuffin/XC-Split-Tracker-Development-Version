@@ -26,7 +26,7 @@ h1{font-size:20px;margin:4px 0 12px}h2{font-size:18px;margin:0 0 8px}
 .row.g-bad{border-color:var(--bad);background:color-mix(in srgb,var(--bad) 16%,var(--card))}
 .gd{font-weight:700;color:var(--tx);margin-right:6px}.gd:empty{display:none}
 .row.drag{background:color-mix(in srgb,var(--ac) 16%,var(--card));border-color:var(--ac);box-shadow:0 8px 22px #0005;z-index:5;position:relative}
-.h{touch-action:none;cursor:grab;font-size:22px;color:var(--mut);padding:0 8px 0 14px;height:100%;display:flex;align-items:center;user-select:none;-webkit-user-select:none}
+.h{touch-action:none;cursor:grab;font-size:22px;color:var(--tx);background:color-mix(in srgb,var(--ln) 60%,transparent);border-radius:10px 0 0 10px;padding:0 12px;height:100%;display:flex;align-items:center;user-select:none;-webkit-user-select:none}
 .row.drag .h{color:var(--ac)}
 .nm{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nm small{display:block;font-weight:400;font-size:12px;color:var(--mut);overflow:hidden;text-overflow:ellipsis}
@@ -224,8 +224,8 @@ function draw0(){
     <div class="bar"><button class="s" id="scn">Import splits</button><button class="s" id="hst">Saved races</button></div>
     <div class="bar"><button class="s" id="tms">Team presets</button></div>
     <div class="add"><input id="in" placeholder="Add a name" autocomplete="off"><button class="p" id="addb">Add</button></div>
-    <p class="hint">Drag ☰ to set your predicted finish order (top = first). Optional: type a goal finish time next to a name (16:49 or 16.49).</p>
-    <div class="list" id="lst">${S.order.map(p=>`<div class="row" data-id="${p.id}"><span class="h">☰</span><span class="nm">${esc(p.name)}</span><input class="gi" data-gi="${p.id}" value="${S.goals[p.id]>0?fg(S.goals[p.id]):''}" placeholder="Goal" inputmode="text" autocomplete="off" autocapitalize="off" aria-label="Goal time for ${esc(p.name)}"><button class="x" data-x="${p.id}">×</button></div>`).join('')}</div>
+    <p class="hint">Press and drag ⇅ to put runners in your predicted finishing order (top = first). Optional: type a goal finish time next to a name (16:49 or 16.49).</p>
+    <div class="list" id="lst">${S.order.map(p=>`<div class="row" data-id="${p.id}"><span class="h">⇅</span><span class="nm">${esc(p.name)}</span><input class="gi" data-gi="${p.id}" value="${S.goals[p.id]>0?fg(S.goals[p.id]):''}" placeholder="Goal" inputmode="text" autocomplete="off" autocapitalize="off" aria-label="Goal time for ${esc(p.name)}"><button class="x" data-x="${p.id}">×</button></div>`).join('')}</div>
     <h1 style="font-size:16px;margin-top:18px">Markers</h1>
     <p class="hint">Add each point where you’ll take splits by its distance. Markers are named automatically, and each can use miles or kilometers, so you can mix them.</p>
     <div class="add"><input id="mdist" type="number" step="any" min="0" inputmode="decimal" placeholder="Distance"><select id="munit" class="sm"><option value="mi" ${S.munit!=='km'?'selected':''}>mi</option><option value="km" ${S.munit==='km'?'selected':''}>km</option></select><button class="s" id="addmk">Add</button></div>
@@ -302,7 +302,7 @@ function draw0(){
   ${run&&D>0&&S.order.some(p=>S.goals[p.id]>0)?'<p class="hint">Goal pace: green = comfortably ahead · yellow = ahead but close to falling behind · red = behind goal pace. The number is how far behind (+) or ahead (−) of goal at this marker.</p>':''}
   <div class="grid"><div class="slots">${m.actual.map((_,i)=>`<div class="slot"><b>${ord(i)}</b><span ${m.laps[i]!=null?`data-ti="${i}"`:''}>${m.laps[i]!=null?fmt(m.laps[i]):'—'}</span><small>${i>0&&m.laps[i]!=null&&m.laps[i-1]!=null?'+'+fmt(m.laps[i]-m.laps[i-1]):''}</small></div>`).join('')}</div>
   <div class="list" id="act">${m.actual.map((id,i)=>{const p=byId(id),el=estLine(id),gs=goalState(id,now()),gt=goalText(id,now()),hg=S.goals[id]>0;
-    return `<div class="row${gs?' g-'+gs.st:''}" data-id="${id}"><span class="h">☰</span><span class="nm">${esc(p.name)}${(hg||el)?`<small>${hg?`<span class="gd">${gt}</span>`:''}${el}</small>`:''}</span></div>`}).join('')}</div></div>
+    return `<div class="row${gs?' g-'+gs.st:''}" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(p.name)}${(hg||el)?`<small>${hg?`<span class="gd">${gt}</span>`:''}${el}</small>`:''}</span></div>`}).join('')}</div></div>
   ${run?`<div class="bar" style="margin-top:12px"><button class="s" id="shr">Share QR</button><button class="s" id="scn">Scan QR</button></div>
   <div class="bar"><button class="s" id="edr">Edit runners</button><button class="s" id="stop">Finish race</button></div>
   <div class="bar"><button class="s" id="inv">Invite helpers (QR)</button></div>`:''}`;
@@ -869,9 +869,9 @@ function drawHelper(){
   <button class="p lap" id="hlap" ${full?'disabled':''}>${full?'All splits taken here':'Take split · '+ord(k.taps.length)+' runner'}</button>
   <div class="bar"><button class="s" id="hundo" ${k.taps.length?'':'disabled'}>Undo last</button></div>
   ${tabsHTML(S.hm.map((m,i)=>`<button class="tab ${i===S.hc?'on':''}" data-t="${i}">${esc(m.label)} · ${m.taps.length}/${m.actual.length}</button>`).join(''))}
-  <p class="hint">Drag ☰ to put names in the order they passed. Gaps show how far behind 1st each runner was.</p>
+  <p class="hint">Press and drag ⇅ to put names in the order they passed. Gaps show how far behind 1st each runner was.</p>
   <div class="grid"><div class="slots" style="width:108px">${k.actual.map((_,i)=>`<div class="slot"><b>${ord(i)}${i<k.taps.length?' ✓':''}</b><span>${i===0&&k.taps.length?'Leader':i>0&&i<k.taps.length?'+'+fmt(k.taps[i]-k.taps[0]):'—'}</span></div>`).join('')}</div>
-  <div class="list" id="act">${k.actual.map(id=>`<div class="row" data-id="${id}"><span class="h">☰</span><span class="nm">${esc(nameOf(id))}</span></div>`).join('')}</div></div>
+  <div class="list" id="act">${k.actual.map(id=>`<div class="row" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(nameOf(id))}</span></div>`).join('')}</div></div>
   <button class="p" id="hsend" style="width:100%;margin-top:12px">Send to organizer</button>
   <div class="bar" style="margin-top:12px"><button class="s" id="hchg">Change markers</button><button class="s" id="hend">End session</button></div>`;
   sortable($('#act'),ids=>{k.actual=ids.map(Number);render()});
