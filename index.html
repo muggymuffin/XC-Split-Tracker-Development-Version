@@ -476,21 +476,39 @@ async function redeemUnlockCode(raw){
   if(!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(code))throw new Error('That doesn’t look like a valid code');
   if(!fbOK())throw new Error('Live/database isn’t set up in this copy of the app');
   if(!(await ensureFB())||!FB.db)throw new Error('No connection — try again online');
+  if(!FB.conn){
+    await new Promise(ok=>{let n=0;const t=setInterval(()=>{if(FB.conn||++n>30){clearInterval(t);ok()}},100)});
+  }
   if(!FB.conn)throw new Error('No connection — try again online');
   const ref=FB.db.ref('codes/'+code);
-  const tx=await ref.transaction(cur=>{
-    if(cur==null)return;
-    const max=Math.max(1,+cur.maxUses||1),used=Math.max(0,+cur.used||0);
-    if(used>=max)return;
-    // Keep all fields; only bump used
-    const next={};Object.keys(cur).forEach(k=>{next[k]=cur[k]});
-    next.used=used+1;
-    next.maxUses=max;
-    if(next.host==null)next.host=true;
-    if(next.live==null)next.live=false;
-    if(next.hours==null)next.hours=24;
-    return next;
-  });
+  let pre;
+  try{
+    pre=await ref.once('value');
+  }catch(e){
+    if((e&&e.code)==='PERMISSION_DENIED')throw new Error('Database rules block codes — open Rules, add the codes section, Publish');
+    throw new Error((e&&e.message)||'Could not read code');
+  }
+  if(!pre.exists())throw new Error('Code not found — key under codes/ must match exactly (CULVER-XC)');
+  const v0=pre.val()||{};
+  if((+v0.used||0)>=Math.max(1,+v0.maxUses||1))throw new Error('This code has no redemptions left');
+  let tx;
+  try{
+    tx=await ref.transaction(cur=>{
+      if(cur==null)return;
+      const max=Math.max(1,+cur.maxUses||1),used=Math.max(0,+cur.used||0);
+      if(used>=max)return;
+      return{
+        maxUses:max,
+        used:used+1,
+        host:cur.host===undefined?true:cur.host,
+        live:cur.live===undefined?false:!!cur.live,
+        hours:cur.hours==null?24:+cur.hours
+      };
+    });
+  }catch(e){
+    if((e&&e.code)==='PERMISSION_DENIED')throw new Error('Database rules block redeeming — add the codes rules and Publish');
+    throw new Error((e&&e.message)||'Redeem failed');
+  }
   if(!tx.committed){
     const snap=await ref.once('value');
     if(!snap.exists())throw new Error('Code not found');
