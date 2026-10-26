@@ -150,23 +150,17 @@ function updGoals(){
   });
 }
 
-// lockCount = number of already-timed runners at the top that cannot be dragged (order is fixed by split times).
-function sortable(el,done,lockCount){
-  const lock=Math.max(0,lockCount|0);
+function sortable(el,done){
   el.querySelectorAll('.h').forEach(h=>{
     h.addEventListener('contextmenu',e=>e.preventDefault());
     h.addEventListener('pointerdown',e=>{
       if(e.pointerType==='mouse'&&e.button!==0)return;
+      e.preventDefault();
       const row=h.closest('.row'),rows=[...el.children],from=rows.indexOf(row);
       if(from<0)return;
-      // Already-timed runners stay put — their order is defined by the times and doesn't sync as a free reorder
-      if(from<lock)return;
-      e.preventDefault();
       const rects=rows.map(r=>r.getBoundingClientRect()),mids=rects.map(r=>r.top+r.height/2);
       const startY=e.clientY,sy0=window.scrollY,pid=e.pointerId;
-      // Cannot drag into the locked (already timed) zone
-      const minDy=rects[lock]?rects[lock].top-rects[from].top:0;
-      const maxDy=rects[rows.length-1].top-rects[from].top;
+      const minDy=rects[0].top-rects[from].top,maxDy=rects[rows.length-1].top-rects[from].top;
       let to=from,over=false;
       row.classList.add('drag');document.body.classList.add('dragging');
       rows.forEach(r=>{r.style.transition=r===row?'none':'transform .12s'});
@@ -182,8 +176,8 @@ function sortable(el,done,lockCount){
         if(ev.pointerId!==pid)return;
         const dy=Math.max(minDy,Math.min(maxDy,ev.clientY-startY+(window.scrollY-sy0)));
         row.style.transform=`translateY(${dy}px) scale(1.02)`;
-        const c=mids[from]+dy;let best=lock,bd=1e9;
-        for(let i=lock;i<mids.length;i++){const d=Math.abs(c-mids[i]);if(d<bd){bd=d;best=i}}
+        const c=mids[from]+dy;let best=0,bd=1e9;
+        for(let i=0;i<mids.length;i++){const d=Math.abs(c-mids[i]);if(d<bd){bd=d;best=i}}
         if(best!==to){to=best;place()}
       };
       const end=ev=>{
@@ -204,6 +198,15 @@ function sortable(el,done,lockCount){
       document.addEventListener('visibilitychange',end);h.addEventListener('lostpointercapture',end);
     });
   });
+}
+// Keep each runner's time on their id when the list is dragged, then put timed runners first in the new order.
+function reorderWithTimes(ids,actual,times){
+  const timeById=new Map();
+  for(let i=0;i<times.length;i++)if(times[i]!=null)timeById.set(+actual[i],times[i]);
+  const newIds=ids.map(Number);
+  const timed=newIds.filter(id=>timeById.has(+id));
+  const rest=newIds.filter(id=>!timeById.has(+id));
+  return{actual:[...timed,...rest],times:timed.map(id=>timeById.get(+id))};
 }
 
 function render(){draw();renderModal();flashUI();liveTick();saveState()}
@@ -317,8 +320,10 @@ function draw0(){
   ${run?`<div class="bar" style="margin-top:12px"><button class="s" id="shr">Share QR</button><button class="s" id="scn">Scan QR</button></div>
   <div class="bar"><button class="s" id="edr">Edit runners</button><button class="s" id="stop">Finish race</button></div>
   <div class="bar"><button class="s" id="inv">Invite helpers (QR)</button></div>`:''}`;
-  // Lock already-timed runners so their order (set by times) can't be dragged out of place
-  sortable($('#act'),ids=>{m.actual=ids.map(Number);m.touched=true;render()},m.laps.length);
+  sortable($('#act'),ids=>{
+    const r=reorderWithTimes(ids,m.actual,m.laps);
+    m.actual=r.actual;m.laps=r.times;m.touched=true;render();
+  });
   a.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{const t=+b.dataset.t,k=S.markers[t];if(S.phase==='race'&&t>0&&!k.laps.length&&!k.touched)k.actual=[...S.markers[t-1].actual];S.cur=t;render()});
   a.querySelectorAll('[data-ti]').forEach(b=>b.onclick=()=>{const i=+b.dataset.ti;S.modal={type:'time',i,t:fmt(m.laps[i])};render()});
   $('#unt').onchange=e=>{m.unit=e.target.value;relabel(m,S.cur);render()};
@@ -892,7 +897,7 @@ function drawHelper(){
   <button class="p lap" id="hlap" ${takeOff?'disabled':''}>${takeLabel}</button>
   <div class="bar"><button class="s" id="hundo" ${k.taps.length?'':'disabled'}>Undo last</button><button class="s" id="hsort" ${full||waitRace?'disabled':''}>Sort waiting by arrival</button></div>
   ${tabsHTML(S.hm.map((m,i)=>`<button class="tab ${i===S.hc?'on':''}" data-t="${i}">${esc(m.label)} · ${m.taps.length}/${m.actual.length}</button>`).join(''))}
-  <p class="hint">Press and drag ⇅ to put names in the order they passed (already-timed runners stay locked). Splits from the organizer or other helpers fill in automatically.</p>
+  <p class="hint">Press and drag ⇅ to put names in the order they passed. Splits from the organizer or other helpers fill in automatically.</p>
   <div class="grid"><div class="slots">${k.actual.map((_,i)=>`<div class="slot"><b>${ord(i)}</b>${hSlot(k,i)}</div>`).join('')}</div>
   <div class="list" id="act">${k.actual.map((id,i)=>{
     return `<div class="row" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(nameOf(id))}<small><span class="gd"></span><span class="hi"></span></small></span></div>`;
@@ -900,8 +905,10 @@ function drawHelper(){
   <button class="p" id="hsend" style="width:100%;margin-top:12px">Send to organizer</button>
   <div style="margin-top:12px">${offToggle(false)}</div>
   <div class="bar" style="margin-top:12px"><button class="s" id="hchg">Change markers</button><button class="s" id="hend">End session</button></div>`;
-  // Lock already-timed runners — free reorder only applies to people still waiting
-  sortable($('#act'),ids=>{k.actual=ids.map(Number);render()},k.taps.length);
+  sortable($('#act'),ids=>{
+    const r=reorderWithTimes(ids,k.actual,k.taps);
+    k.actual=r.actual;k.taps=r.times;render();
+  });
   $('#hlap').onclick=hlap;$('#hsort').onclick=hSort;
   $('#hundo').onclick=()=>{k.taps.pop();render()};
   $('#hsend').onclick=()=>{S.modal={type:'hres'};render()};
@@ -1154,8 +1161,7 @@ function hUpdate(force){
   }
   if(HO.m)hRows(ms);
 }
-// When the organizer or another helper already timed a runner at one of this phone's markers,
-// fold those times into the local taps so the slots and order match what everyone else sees.
+// Fold organizer/other-helper times into local taps, and adopt their timed order so rearranges sync both ways.
 function hPullSplits(){
   if(!HO.m||!S.hm||!S.hm.length)return false;
   const sh=hShift(),ep=HO.m.ep;if(ep==null)return false;
@@ -1163,25 +1169,32 @@ function hPullSplits(){
   withOrg(()=>{
     S.hm.forEach(k=>{
       const m=S.markers[k.idx];if(!m)return;
-      const remote=new Map();
-      m.actual.forEach((id,i)=>{if(m.laps[i]!=null)remote.set(+id,+m.laps[i])});
-      if(!remote.size)return;
+      const remote=new Map(),remoteOrder=[];
+      m.actual.forEach((id,i)=>{
+        if(m.laps[i]==null)return;
+        id=+id;
+        if(!remote.has(id))remoteOrder.push(id);
+        remote.set(id,+m.laps[i]);
+      });
       const local=new Map();
       for(let i=0;i<k.taps.length;i++)local.set(+k.actual[i],k.taps[i]);
       let added=0;
       remote.forEach((rel,id)=>{
         if(local.has(id))return;
         if(!k.actual.some(x=>+x===id))return;
-        // Convert race-relative ms to this phone's absolute wall time
         local.set(id,Math.round(rel-sh+ep));
         added++;
       });
-      if(!added)return;
-      const pairs=[...local.entries()].sort((a,b)=>a[1]-b[1]);
-      const have=new Set(pairs.map(p=>p[0]));
-      const rest=k.actual.filter(id=>!have.has(+id));
-      k.actual=[...pairs.map(p=>p[0]),...rest];
-      k.taps=pairs.map(p=>p[1]);
+      // Build timed list: organizer order first, then any local-only times
+      const timed=[];
+      remoteOrder.forEach(id=>{if(local.has(id)&&!timed.includes(id))timed.push(id)});
+      k.actual.forEach(id=>{id=+id;if(local.has(id)&&!timed.includes(id))timed.push(id)});
+      const rest=k.actual.filter(id=>!local.has(+id));
+      const newTaps=timed.map(id=>local.get(id));
+      const orderCh=timed.join()!==k.actual.slice(0,k.taps.length).join()||timed.length!==k.taps.length;
+      if(!added&&!orderCh)return;
+      k.actual=[...timed,...rest];
+      k.taps=newTaps;
       ch=true;
     });
   });
@@ -1246,12 +1259,18 @@ function hRows(ms){
     rows.forEach((row,i)=>{
       const id=+row.dataset.id,parts=[],r=recentPace(id);let st=null,gd='';
       if(i<k.taps.length){
-        // Already timed — only then show over/under goal at this marker
+        // Already timed — goal over/under at this marker, plus estimated finish
         const el=Math.max(0,k.taps[i]+sh-ep),g=S.goals[id];
         if(g>0&&D>0&&cd>0){
           const exp=g*Math.min(cd,D)/D,diff=el-exp;
           gd=(diff>0?'+':'−')+fmtE(Math.abs(diff));
           st=diff>0?'bad':diff>=-Math.max(3000,exp*GOAL_TOL)?'near':'ok';
+        }
+        if(run&&D>0){
+          const r2=recentPace(id);let pc=null,b=null,sy='~';
+          if(r2){pc=r2.pace;b={d:r2.d,t:r2.t}}
+          else if(cd>0&&el>0){pc=el/cd;b={d:cd,t:el}}
+          if(pc!=null&&D>b.d)parts.push('Fin '+sy+fmtE(b.t+pc*(D-b.d)));
         }
       }else if(run){
         // Waiting: estimates only — no goal over/under until a split is taken here
@@ -1263,8 +1282,6 @@ function hRows(ms){
           if(D>b.d)parts.push('Fin '+sy+fmtE(b.t+pc*(D-b.d)));
         }
       }
-      // Pace only for runners not yet timed at this marker
-      if(i>=k.taps.length&&r)parts.push(fmtE(r.pace*KMF(u))+'/'+u);
       const gdEl=row.querySelector('.gd'),hiEl=row.querySelector('.hi');
       if(gdEl)gdEl.textContent=gd;
       if(hiEl)hiEl.textContent=(gd&&parts.length?' ':'')+parts.join(' · ');
@@ -1319,21 +1336,35 @@ function orgMerge(remote){
 }
 // Times a helper supplied earlier are swapped for their latest version (so a helper fixing the order or undoing a tap
 // carries through), but a time the organizer entered or edited themselves is never overwritten.
+// Helper order of timed runners is respected so rearranging after splits updates the organizer.
 function applyHelper(L,pairs,key){
   const prev=S.lv.src[key]||{},have=new Map(),orig=new Map();
-  L.actual.forEach((id,i)=>{if(L.laps[i]!=null){have.set(id,L.laps[i]);orig.set(id,L.laps[i])}});
+  L.actual.forEach((id,i)=>{if(L.laps[i]!=null){have.set(+id,L.laps[i]);orig.set(+id,L.laps[i])}});
   Object.keys(prev).forEach(k=>{const id=+k;if(have.get(id)===prev[k])have.delete(id)});
   const mine={};
-  pairs.forEach(([id,t])=>{if(!have.has(id)){have.set(id,t);mine[id]=t}});
-  let same=have.size===orig.size;
-  if(same)have.forEach((t,id)=>{if(orig.get(id)!==t)same=false});
-  if(Object.keys(mine).length)S.lv.src[key]=mine;else delete S.lv.src[key];
-  if(same)return;
-  const ids=[...L.actual];
-  pairs.forEach(([id])=>{if(!ids.includes(id))ids.push(id)});
-  const timed=ids.filter(id=>have.has(id)).sort((x,y)=>have.get(x)-have.get(y));
-  const rest=ids.filter(id=>!have.has(id));
-  L.actual=[...timed,...rest];L.laps=timed.map(id=>have.get(id));
+  pairs.forEach(([id,t])=>{id=+id;if(!have.has(id)){have.set(id,t);mine[id]=t}});
+  // Prefer the helper's reported order for anyone they timed
+  const helperOrder=pairs.map(p=>+p[0]).filter(id=>have.has(id));
+  const timed=[];
+  helperOrder.forEach(id=>{if(have.has(id)&&!timed.includes(id))timed.push(id)});
+  have.forEach((_,id)=>{if(!timed.includes(id))timed.push(id)});
+  // Sort only ids that weren't in the helper order by time (organizer-only times)
+  const fromHelper=new Set(helperOrder);
+  const onlyOrg=timed.filter(id=>!fromHelper.has(id)).sort((x,y)=>have.get(x)-have.get(y));
+  const ordered=[...helperOrder.filter(id=>have.has(id)),...onlyOrg];
+  const rest=L.actual.filter(id=>!have.has(+id));
+  pairs.forEach(([id])=>{id=+id;if(!have.has(id)&&!rest.includes(id)&&!ordered.includes(id))rest.push(id)});
+  let same=ordered.length===orig.size&&ordered.every((id,i)=>L.actual[i]==id&&orig.get(id)===have.get(id));
+  if(Object.keys(mine).length)S.lv.src[key]=mine;else if(!helperOrder.length)delete S.lv.src[key];
+  if(same&&!Object.keys(mine).length){
+    // Still apply order-only changes from helper
+    const prevTimed=L.actual.filter(id=>orig.has(+id));
+    if(helperOrder.length&&helperOrder.join()!==prevTimed.join()){
+      L.actual=[...ordered,...rest];L.laps=ordered.map(id=>have.get(id));
+    }
+    return;
+  }
+  L.actual=[...ordered,...rest];L.laps=ordered.map(id=>have.get(id));
 }
 
 window.addEventListener('online',liveStep);
