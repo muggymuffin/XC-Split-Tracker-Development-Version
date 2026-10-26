@@ -139,31 +139,38 @@ function goalState(id,ms){
 }
 function goalText(id,ms){const g=S.goals[id];if(!(g>0))return'';const s=goalState(id,ms);return s?(s.diff>0?'+':'−')+fmtE(Math.abs(s.diff)):'Goal '+fmtE(g)}
 function updGoals(){
-  const ms=now();
+  const ms=now(),mk=M();
   document.querySelectorAll('#act .row[data-id]').forEach(r=>{
-    const id=+r.dataset.id,s=goalState(id,ms);
+    const id=+r.dataset.id;
+    // Over/under goal only after this runner has a split at the current marker
+    const has=timeAt(mk,id)!=null;
+    const s=has?goalState(id,ms):null;
     r.classList.remove('g-ok','g-near','g-bad');if(s)r.classList.add('g-'+s.st);
-    const gd=r.querySelector('.gd');if(gd)gd.textContent=goalText(id,ms);
+    const gd=r.querySelector('.gd');if(gd)gd.textContent=has&&s?goalText(id,ms):'';
   });
 }
 
-function sortable(el,done){
+// lockCount = number of already-timed runners at the top that cannot be dragged (order is fixed by split times).
+function sortable(el,done,lockCount){
+  const lock=Math.max(0,lockCount|0);
   el.querySelectorAll('.h').forEach(h=>{
     h.addEventListener('contextmenu',e=>e.preventDefault());
     h.addEventListener('pointerdown',e=>{
       if(e.pointerType==='mouse'&&e.button!==0)return;
-      e.preventDefault();
       const row=h.closest('.row'),rows=[...el.children],from=rows.indexOf(row);
       if(from<0)return;
+      // Already-timed runners stay put — their order is defined by the times and doesn't sync as a free reorder
+      if(from<lock)return;
+      e.preventDefault();
       const rects=rows.map(r=>r.getBoundingClientRect()),mids=rects.map(r=>r.top+r.height/2);
       const startY=e.clientY,sy0=window.scrollY,pid=e.pointerId;
-      const minDy=rects[0].top-rects[from].top,maxDy=rects[rows.length-1].top-rects[from].top;
+      // Cannot drag into the locked (already timed) zone
+      const minDy=rects[lock]?rects[lock].top-rects[from].top:0;
+      const maxDy=rects[rows.length-1].top-rects[from].top;
       let to=from,over=false;
       row.classList.add('drag');document.body.classList.add('dragging');
       rows.forEach(r=>{r.style.transition=r===row?'none':'transform .12s'});
       try{h.setPointerCapture(pid)}catch(_){}
-      // The dragged row is never moved in the DOM while dragging (that drops pointer capture).
-      // It just follows the finger with a transform; the other rows slide out of the way.
       const place=()=>rows.forEach((r,i)=>{
         if(r===row)return;
         let dy=0;
@@ -175,8 +182,8 @@ function sortable(el,done){
         if(ev.pointerId!==pid)return;
         const dy=Math.max(minDy,Math.min(maxDy,ev.clientY-startY+(window.scrollY-sy0)));
         row.style.transform=`translateY(${dy}px) scale(1.02)`;
-        const c=mids[from]+dy;let best=0,bd=1e9;
-        for(let i=0;i<mids.length;i++){const d=Math.abs(c-mids[i]);if(d<bd){bd=d;best=i}}
+        const c=mids[from]+dy;let best=lock,bd=1e9;
+        for(let i=lock;i<mids.length;i++){const d=Math.abs(c-mids[i]);if(d<bd){bd=d;best=i}}
         if(best!==to){to=best;place()}
       };
       const end=ev=>{
@@ -192,7 +199,6 @@ function sortable(el,done){
         const ids=rows.map(r=>r.dataset.id);ids.splice(from,1);ids.splice(to,0,rows[from].dataset.id);
         done(ids);
       };
-      // Listen on window, not just the handle, so a fast drag or a release off the handle is never missed.
       window.addEventListener('pointermove',move);window.addEventListener('pointerup',end);
       window.addEventListener('pointercancel',end);window.addEventListener('blur',end);
       document.addEventListener('visibilitychange',end);h.addEventListener('lostpointercapture',end);
@@ -306,12 +312,13 @@ function draw0(){
   ${run?'':'<p class="hint">Drag names to fix mix-ups. Tap a time to edit it.</p>'}
   ${run&&D>0&&S.order.some(p=>S.goals[p.id]>0)?'<p class="hint">Goal pace: green = comfortably ahead · yellow = ahead but close to falling behind · red = behind goal pace. The number is how far behind (+) or ahead (−) of goal at this marker.</p>':''}
   <div class="grid"><div class="slots">${m.actual.map((_,i)=>`<div class="slot"><b>${ord(i)}</b><span ${m.laps[i]!=null?`data-ti="${i}"`:''}>${m.laps[i]!=null?fmt(m.laps[i]):'—'}</span><small>${i>0&&m.laps[i]!=null&&m.laps[i-1]!=null?'+'+fmt(m.laps[i]-m.laps[i-1]):''}</small></div>`).join('')}</div>
-  <div class="list" id="act">${m.actual.map((id,i)=>{const p=byId(id),el=estLine(id),gs=goalState(id,now()),gt=goalText(id,now()),hg=S.goals[id]>0;
-    return `<div class="row${gs?' g-'+gs.st:''}" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(p.name)}${(hg||el)?`<small>${hg?`<span class="gd">${gt}</span>`:''}${el}</small>`:''}</span></div>`}).join('')}</div></div>
+  <div class="list" id="act">${m.actual.map((id,i)=>{const p=byId(id),el=estLine(id),has=m.laps[i]!=null&&timeAt(m,id)!=null,gs=has?goalState(id,now()):null,gt=has?goalText(id,now()):'',showG=has&&S.goals[id]>0;
+    return `<div class="row${gs?' g-'+gs.st:''}" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(p.name)}${(showG||el)?`<small>${showG?`<span class="gd">${gt}</span>`:''}${el}</small>`:''}</span></div>`}).join('')}</div></div>
   ${run?`<div class="bar" style="margin-top:12px"><button class="s" id="shr">Share QR</button><button class="s" id="scn">Scan QR</button></div>
   <div class="bar"><button class="s" id="edr">Edit runners</button><button class="s" id="stop">Finish race</button></div>
   <div class="bar"><button class="s" id="inv">Invite helpers (QR)</button></div>`:''}`;
-  sortable($('#act'),ids=>{m.actual=ids.map(Number);m.touched=true;render()});
+  // Lock already-timed runners so their order (set by times) can't be dragged out of place
+  sortable($('#act'),ids=>{m.actual=ids.map(Number);m.touched=true;render()},m.laps.length);
   a.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{const t=+b.dataset.t,k=S.markers[t];if(S.phase==='race'&&t>0&&!k.laps.length&&!k.touched)k.actual=[...S.markers[t-1].actual];S.cur=t;render()});
   a.querySelectorAll('[data-ti]').forEach(b=>b.onclick=()=>{const i=+b.dataset.ti;S.modal={type:'time',i,t:fmt(m.laps[i])};render()});
   $('#unt').onchange=e=>{m.unit=e.target.value;relabel(m,S.cur);render()};
@@ -841,7 +848,12 @@ function liveModal(el,title,text,codeFn){
 }
 function inviteModal(el){liveModal(el,'Invite helpers','Helpers open the app, choose the <b>Helper</b> tab, and scan this QR. Finish names and markers before inviting helpers.',invCode)}
 function hresModal(el){liveModal(el,'Send to organizer','On the organizer’s phone choose <b>Import splits</b> and scan this QR. It changes every second to match clocks, so keep the screen steady until it’s read. You can send again after more splits.',resCode)}
-function hlap(){const k=S.hm[S.hc];if(!k||k.taps.length>=k.actual.length)return;k.taps.push(Date.now());render()}
+function hlap(){
+  const k=S.hm[S.hc];if(!k||k.taps.length>=k.actual.length)return;
+  // Live mode: don't record splits before the organizer starts the race
+  if(liveOn()&&!(HO.m&&HO.m.ph==='race'))return;
+  k.taps.push(Date.now());render();
+}
 function drawHelper(){
   const a=$('#app'),inv=S.hinv;
   if(S.phase==='hhome'){
@@ -871,21 +883,25 @@ function drawHelper(){
     return;
   }
   const k=S.hm[S.hc],n=k.actual.length,full=k.taps.length>=n,nameOf=id=>{const x=inv.o.find(r=>r[0]==id);return x?x[1]:'?'};
+  // In live mode, disable Take split until the organizer has started the race
+  const waitRace=liveOn()&&!(HO.m&&HO.m.ph==='race');
+  const takeOff=full||waitRace;
+  const takeLabel=full?'All splits taken here':waitRace?'Waiting for race to start':'Take split · '+ord(k.taps.length)+' runner';
   a.innerHTML=`<h1>Timing as helper</h1>
   <div class="clock" id="hclk" style="display:none"></div><p class="hint" id="hfp" style="text-align:center;margin-top:-6px"></p>
-  <button class="p lap" id="hlap" ${full?'disabled':''}>${full?'All splits taken here':'Take split · '+ord(k.taps.length)+' runner'}</button>
-  <div class="bar"><button class="s" id="hundo" ${k.taps.length?'':'disabled'}>Undo last</button><button class="s" id="hsort" ${full?'disabled':''}>Sort waiting by arrival</button></div>
+  <button class="p lap" id="hlap" ${takeOff?'disabled':''}>${takeLabel}</button>
+  <div class="bar"><button class="s" id="hundo" ${k.taps.length?'':'disabled'}>Undo last</button><button class="s" id="hsort" ${full||waitRace?'disabled':''}>Sort waiting by arrival</button></div>
   ${tabsHTML(S.hm.map((m,i)=>`<button class="tab ${i===S.hc?'on':''}" data-t="${i}">${esc(m.label)} · ${m.taps.length}/${m.actual.length}</button>`).join(''))}
-  <p class="hint">Press and drag ⇅ to put names in the order they passed. Gaps show how far behind 1st each runner was. Splits taken by the organizer or other helpers fill in automatically.</p>
+  <p class="hint">Press and drag ⇅ to put names in the order they passed (already-timed runners stay locked). Splits from the organizer or other helpers fill in automatically.</p>
   <div class="grid"><div class="slots">${k.actual.map((_,i)=>`<div class="slot"><b>${ord(i)}</b>${hSlot(k,i)}</div>`).join('')}</div>
   <div class="list" id="act">${k.actual.map((id,i)=>{
-    const timed=i<k.taps.length;
     return `<div class="row" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(nameOf(id))}<small><span class="gd"></span><span class="hi"></span></small></span></div>`;
   }).join('')}</div></div>
   <button class="p" id="hsend" style="width:100%;margin-top:12px">Send to organizer</button>
   <div style="margin-top:12px">${offToggle(false)}</div>
   <div class="bar" style="margin-top:12px"><button class="s" id="hchg">Change markers</button><button class="s" id="hend">End session</button></div>`;
-  sortable($('#act'),ids=>{k.actual=ids.map(Number);render()});
+  // Lock already-timed runners — free reorder only applies to people still waiting
+  sortable($('#act'),ids=>{k.actual=ids.map(Number);render()},k.taps.length);
   $('#hlap').onclick=hlap;$('#hsort').onclick=hSort;
   $('#hundo').onclick=()=>{k.taps.pop();render()};
   $('#hsend').onclick=()=>{S.modal={type:'hres'};render()};
@@ -1117,6 +1133,15 @@ function hUpdate(force){
   if(S.phase!=='htime'||!S.hinv)return;
   const c=$('#hclk'),f=$('#hfp'),ms=hElapsed();
   if(c){if(ms==null)c.style.display='none';else{c.style.display='';c.textContent=fmt(ms)}}
+  // Keep Take split enabled/disabled in sync when the race starts in live mode
+  const btn=$('#hlap'),k=S.hm[S.hc];
+  if(btn&&k){
+    const full=k.taps.length>=k.actual.length;
+    const wait=liveOn()&&!(HO.m&&HO.m.ph==='race');
+    btn.disabled=full||wait;
+    btn.textContent=full?'All splits taken here':wait?'Waiting for race to start':'Take split · '+ord(k.taps.length)+' runner';
+    const sb=$('#hsort');if(sb)sb.disabled=full||wait;
+  }
   const t=performance.now(),slow=force||t-HO.lr>500;
   if(!slow&&!(f&&!f.textContent))return;
   HO.lr=t;
@@ -1221,27 +1246,21 @@ function hRows(ms){
     rows.forEach((row,i)=>{
       const id=+row.dataset.id,parts=[],r=recentPace(id);let st=null,gd='';
       if(i<k.taps.length){
-        // Already timed (by this helper or pulled from organizer/others)
+        // Already timed — only then show over/under goal at this marker
         const el=Math.max(0,k.taps[i]+sh-ep),g=S.goals[id];
         if(g>0&&D>0&&cd>0){
           const exp=g*Math.min(cd,D)/D,diff=el-exp;
           gd=(diff>0?'+':'−')+fmtE(Math.abs(diff));
           st=diff>0?'bad':diff>=-Math.max(3000,exp*GOAL_TOL)?'near':'ok';
         }
-      }else{
-        const gs=goalState(id,ms),gt=goalText(id,ms),have=timeAt(m,id);
-        if(gt)gd=gt;
-        st=gs?gs.st:null;
-        if(have!=null)parts.push('✓ '+fmtE(have));
-        else if(run){
-          // Arrival / finish estimates only (no "Due now")
-          const es=hEst(id,m,cd,gp);
-          if(es)parts.push('Arr '+es.sy+fmtE(es.t));
-          if(D>0&&gp!=null){
-            const r2=recentPace(id);let pc,b,sy;
-            if(r2){pc=r2.pace;b={d:r2.d,t:r2.t};sy='~'}else{pc=gp;b={d:0,t:0};sy='≈'}
-            if(D>b.d)parts.push('Fin '+sy+fmtE(b.t+pc*(D-b.d)));
-          }
+      }else if(run){
+        // Waiting: estimates only — no goal over/under until a split is taken here
+        const es=hEst(id,m,cd,gp);
+        if(es)parts.push('Arr '+es.sy+fmtE(es.t));
+        if(D>0&&gp!=null){
+          const r2=recentPace(id);let pc,b,sy;
+          if(r2){pc=r2.pace;b={d:r2.d,t:r2.t};sy='~'}else{pc=gp;b={d:0,t:0};sy='≈'}
+          if(D>b.d)parts.push('Fin '+sy+fmtE(b.t+pc*(D-b.d)));
         }
       }
       // Pace only for runners not yet timed at this marker
