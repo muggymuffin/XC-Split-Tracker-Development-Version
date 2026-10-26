@@ -2,7 +2,7 @@ RACE SPLIT TRACKER - OFFLINE VERSION
 ==================================
 
 FILES (keep them all together in one folder)
-  index.html, qrgen.js, sw.js, manifest.webmanifest,
+  index.html, firebase-config.js, qrgen.js, sw.js, manifest.webmanifest,
   THIRD-PARTY-LICENSES.txt,
   icon-192.png, icon-512.png, apple-touch-icon.png
   jsQR.js

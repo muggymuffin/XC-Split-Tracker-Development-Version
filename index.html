@@ -83,38 +83,19 @@ summary{cursor:pointer;margin:8px 0}
 .cr{text-align:center;margin:18px 0 6px}
 .lnk{font:inherit;font-size:13px;background:none;border:0;color:var(--mut);text-decoration:underline;cursor:pointer;padding:8px}
 .lic{font-size:11px;white-space:pre-wrap;color:var(--mut);margin:6px 0 0}
+.lvb{text-align:center;margin:-4px 0 10px}
 </style></head><body><main id="app"></main><div id="modal"></div>
 
 
-<!-- Third-party code: qrgen.js (MIT, Kazuhiko Arase), jsQR.js (Apache-2.0, Cosmo Wolfe and contributors), Firebase (Apache-2.0). See THIRD-PARTY-LICENSES.txt -->
+<!-- Third-party code: qrgen.js (MIT, Kazuhiko Arase), jsQR.js (Apache-2.0, Cosmo Wolfe and contributors). See THIRD-PARTY-LICENSES.txt -->
+<script src="firebase-config.js"></script>
 <script src="qrgen.js"></script>
 <script src="jsQR.js"></script>
-<script src="firebase-app-compat.js"></script>
-<script src="firebase-database-compat.js"></script>
 <script>
-/* ========== FIREBASE CONFIG — paste your values from the Firebase console ==========
-   1. Go to https://console.firebase.google.com → Create a project (or use an existing one)
-   2. Add a web app (</> icon). You can skip hosting.
-   3. Copy the firebaseConfig object and paste it below.
-   4. In the console: Build → Realtime Database → Create Database → Start in locked mode.
-   5. Rules tab → paste the rules from README.md and Publish.
-   6. Project settings → General → Your apps → Authorized domains → add your GitHub Pages domain
-      (e.g. yourusername.github.io)
-   Leave the object empty ({}) to keep the app fully offline / QR-only.
-*/
-const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyCrfjsop3Y6oTJxCGERoG_tvh4KLdz8mmo",
-  authDomain: "xc-split-tracker.firebaseapp.com",
-  databaseURL: "https://xc-split-tracker-default-rtdb.firebaseio.com",
-  projectId: "xc-split-tracker",
-  storageBucket: "xc-split-tracker.firebasestorage.app",
-  messagingSenderId: "888342084479",
-  appId: "1:888342084479:web:e0bd5013b5be8f7854384a",
-  measurementId: "G-359T7ZKPM0"
-};
-
 const $=s=>document.querySelector(s);
-let S={phase:'setup',raceName:'',order:[],pred:[],marks:[],def:{label:'Marker 1',dist:''},total:'',unit:'mi',markers:[],cur:0,start:0,final:0,raf:0,nid:1,rid:'',epoch:0,flash:'',invRid:'',munit:'mi',tdraft:'',hinv:null,hsel:[],hm:[],hc:0,modal:null,draft:null,goals:{},live:false,helperId:null,fbUnsub:null,fbOnline:true};
+function newLv(){return{hid:'',dirty:0,ver:0,sig:'',src:{},orid:''}}
+function loadOff(){try{return localStorage.getItem('rst-offline-v1')==='1'}catch(e){return false}}
+let S={phase:'setup',raceName:'',order:[],pred:[],marks:[],def:{label:'Marker 1',dist:''},total:'',unit:'mi',markers:[],cur:0,start:0,final:0,raf:0,nid:1,rid:'',epoch:0,flash:'',invRid:'',munit:'mi',tdraft:'',hinv:null,hsel:[],hm:[],hc:0,modal:null,draft:null,goals:{},lv:newLv(),offline:loadOff()};
 const M=()=>S.markers[S.cur];
 const mks=()=>S.marks.length?S.marks:[S.def];
 const fmt=ms=>{const t=Math.floor(ms/10),c=t%100,s=Math.floor(t/100)%60,m=Math.floor(t/6000);return m+':'+String(s).padStart(2,'0')+'.'+String(c).padStart(2,'0')};
@@ -133,79 +114,6 @@ const KMF=u=>u==='mi'?1.609344:1;
 const distKm=k=>(+k.dist>0?+k.dist:0)*KMF(k.unit||S.unit);
 const totKm=()=>(+S.total>0?+S.total:0)*KMF(S.unit);
 const relabel=(k,i)=>{const d=String(k.dist).trim();k.label=d!==''?(+d>0?String(+d):d)+' '+(k.unit||S.unit):'Marker '+(i+1)};
-
-/* ---------- Firebase live sync ---------- */
-let fbDB=null,fbReady=false;
-function fbConfigured(){return !!(FIREBASE_CONFIG&&FIREBASE_CONFIG.apiKey&&FIREBASE_CONFIG.databaseURL)}
-function initFirebase(){
-  if(!fbConfigured()||typeof firebase==='undefined'){fbReady=false;return}
-  try{
-    if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);
-    fbDB=firebase.database();
-    // Realtime Database queues writes while offline and flushes them when the connection returns.
-    fbDB.ref('.info/connected').on('value',snap=>{S.fbOnline=!!snap.val();const el=$('#fbstat');if(el)el.textContent=S.fbOnline?'Live · online':'Live · offline (queued)'});
-    fbReady=true;
-  }catch(e){console.warn('Firebase init failed',e);fbReady=false}
-}
-function stopFbListen(){if(S.fbUnsub){try{S.fbUnsub()}catch(e){}S.fbUnsub=null}}
-function raceRef(rid){return fbDB.ref('races/'+rid)}
-function ensureHelperId(){if(!S.helperId){try{S.helperId=localStorage.getItem('rst-hid')||Math.random().toString(36).slice(2,10);localStorage.setItem('rst-hid',S.helperId)}catch(e){S.helperId=Math.random().toString(36).slice(2,10)}}return S.helperId}
-function pushRaceMeta(){
-  if(!fbReady||!S.live||!S.rid)return;
-  const meta={order:S.order.map(x=>[x.id,x.name]),markers:S.markers.map(k=>[k.label,k.dist||'',k.unit||S.unit]),unit:S.unit,epoch:S.epoch||Date.now(),total:S.total||'',raceName:S.raceName||'',updated:firebase.database.ServerValue.TIMESTAMP};
-  raceRef(S.rid).child('meta').set(meta).catch(e=>console.warn('meta write',e));
-}
-function pushHelperSplits(){
-  if(!fbReady||!S.live||!S.hinv||!S.hinv.r)return;
-  const hid=ensureHelperId();
-  const payload={};
-  S.hm.forEach((k,idx)=>{
-    if(!k.taps.length)return;
-    // Helper taps are already absolute Date.now() values
-    payload[idx]={actual:k.actual.slice(),taps:k.taps.slice(),updated:Date.now()};
-  });
-  if(!Object.keys(payload).length)return;
-  raceRef(S.hinv.r).child('helpers/'+hid).set(payload).catch(e=>console.warn('helper write',e));
-}
-let helperPushTimer=0;
-function scheduleHelperPush(){clearTimeout(helperPushTimer);helperPushTimer=setTimeout(pushHelperSplits,400)}
-function startOrganizerListen(){
-  stopFbListen();
-  if(!fbReady||!S.live||!S.rid||!(S.phase==='race'||S.phase==='done'))return;
-  const ref=raceRef(S.rid).child('helpers');
-  let lastFlash=0;
-  const handler=snap=>{
-    const data=snap.val();if(!data)return;
-    let added=0;
-    Object.keys(data).forEach(hid=>{
-      const h=data[hid];if(!h)return;
-      Object.keys(h).forEach(idxStr=>{
-        const idx=+idxStr,entry=h[idxStr];if(!entry||!Array.isArray(entry.actual)||!Array.isArray(entry.taps))return;
-        const L=S.markers[idx];if(!L)return;
-        const before=L.laps.filter(x=>x!=null).length;
-        // Convert absolute timestamps to race-relative ms
-        const pairs=entry.actual.map((id,i)=>{
-          const abs=entry.taps[i];
-          if(abs==null||!byId(id))return null;
-          return [id,Math.max(0,abs-(S.epoch||0))];
-        }).filter(Boolean);
-        if(!pairs.length)return;
-        fillMarker(L,pairs.map(x=>x[0]),pairs.map(x=>x[1]),'live');
-        added+=L.laps.filter(x=>x!=null).length-before;
-      });
-    });
-    if(added>0){render();const t=Date.now();if(t-lastFlash>2500){lastFlash=t;setFlash('Live · +'+added+' split'+(added===1?'':'s'))}}
-  };
-  ref.on('value',handler);
-  S.fbUnsub=()=>ref.off('value',handler);
-}
-function setLive(on){
-  S.live=!!on;
-  try{localStorage.setItem('rst-live',S.live?'1':'0')}catch(e){}
-  if(!S.live)stopFbListen();
-  else if(S.phase==='race'||S.phase==='done'){pushRaceMeta();startOrganizerListen()}
-}
-
 // Every timed point for a runner at markers that have a distance, nearest first to the start.
 function pts(id){const a=[];S.markers.forEach(mk=>{const d=distKm(mk),t=timeAt(mk,id);if(d>0&&t!=null&&t>0)a.push({d,t})});a.sort((x,y)=>x.d-y.d);return a}
 // Pace from the gap between a runner's two most recent splits (or start -> first split if they only have one).
@@ -291,7 +199,7 @@ function sortable(el,done){
   });
 }
 
-function render(){draw();renderModal();flashUI();saveState()}
+function render(){draw();renderModal();flashUI();liveTick();saveState()}
 
 function tabsHTML(inner){return `<div class="tw" id="tw"><div class="tabs" id="mtabs">${inner}</div><button class="tar l" id="tabl" aria-label="Scroll markers left">‹</button><button class="tar r" id="tabr" aria-label="Scroll markers right">›</button></div>`}
 function initTabs(sl){
@@ -308,19 +216,17 @@ function initTabs(sl){
   $('#tabr').onclick=()=>sc.scrollBy({left:sc.clientWidth*0.6,behavior:'smooth'});
   upd();
 }
-function draw(){const old=$('#mtabs'),sl=old?old.scrollLeft:0;draw0();initTabs(sl)}
+function draw(){const old=$('#mtabs'),sl=old?old.scrollLeft:0;draw0();liveBadge();bindOff();initTabs(sl)}
 window.addEventListener('resize',()=>{const w=$('#tw'),sc=$('#mtabs');if(w&&sc){w.classList.toggle('cl',sc.scrollLeft>2);w.classList.toggle('cr',sc.scrollLeft+sc.clientWidth<sc.scrollWidth-2)}});
 function draw0(){
   if(S.phase[0]==='h')return drawHelper();
   const a=$('#app');
   if(S.phase==='setup'){
     a.innerHTML=`<h1>Race Split Taker</h1>
-    ${modeSeg('org')}
+    ${modeSeg('org')}${offToggle()}
     <label for="racename">Race name</label><input id="racename" value="${esc(S.raceName||'')}" placeholder="e.g. County Championships" autocomplete="off">
     <div class="bar"><button class="s" id="scn">Import splits</button><button class="s" id="hst">Saved races</button></div>
     <div class="bar"><button class="s" id="tms">Team presets</button></div>
-    <label class="chk" style="margin-top:8px"><input type="checkbox" id="livetog" ${S.live?'checked':''} ${fbConfigured()?'':'disabled'}> Live helper updates (Firebase)</label>
-    <p class="hint" id="fbstat" style="margin-top:4px">${fbConfigured()?(S.live?(S.fbOnline?'Live · online':'Live · offline (queued)'):'Live off — using QR only'):'Add FIREBASE_CONFIG in the code to enable live updates. QR still works offline.'}</p>
     <div class="add"><input id="in" placeholder="Add a name" autocomplete="off"><button class="p" id="addb">Add</button></div>
     <p class="hint">Press and drag ⇅ to put runners in your predicted finishing order (top = first). Optional: type a goal finish time next to a name (16:49 or 16.49).</p>
     <div class="list" id="lst">${S.order.map(p=>`<div class="row" data-id="${p.id}"><span class="h">⇅</span><span class="nm">${esc(p.name)}</span><input class="gi" data-gi="${p.id}" value="${S.goals[p.id]>0?fg(S.goals[p.id]):''}" placeholder="Goal" inputmode="text" autocomplete="off" autocapitalize="off" aria-label="Goal time for ${esc(p.name)}"><button class="x" data-x="${p.id}">×</button></div>`).join('')}</div>
@@ -332,7 +238,6 @@ function draw0(){
     <p class="cr"><button class="lnk" id="crd">Credits &amp; licenses</button></p>`;
     const add=()=>{const v=$('#in').value.trim();if(!v)return;S.order.push({id:S.nid++,name:v});render();$('#in').focus()};
     $('#racename').oninput=e=>{S.raceName=e.target.value;saveState()};
-    const lt=$('#livetog');if(lt)lt.onchange=()=>setLive(lt.checked);
     $('#addb').onclick=add;$('#in').onkeydown=e=>{if(e.key==='Enter')add()};$('#crd').onclick=()=>{S.modal={type:'credits'};render()};bindSync();$('#hst').onclick=()=>{S.modal={type:'hist'};render()};$('#tms').onclick=()=>{S.modal={type:'teams'};render()};bindSeg();
     a.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{S.order=S.order.filter(p=>p.id!=b.dataset.x);render()});
     a.querySelectorAll('[data-gi]').forEach(i=>{
@@ -781,7 +686,7 @@ function copyTable(d){
 }
 const getHist=()=>{try{return JSON.parse(localStorage.getItem('rst-history-v1')||'[]')}catch(e){return[]}};
 const histTitle=e=>new Date(e.epoch||e.saved).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+' · '+e.order.length+' runners';
-const snapOf=()=>({phase:S.phase,raceName:S.raceName||'',order:S.order,pred:S.pred,marks:S.marks,def:S.def,total:S.total,unit:S.unit,markers:S.markers,cur:S.cur,final:S.final,nid:S.nid,rid:S.rid,epoch:S.epoch,invRid:S.invRid,hinv:S.hinv,hsel:S.hsel,hm:S.hm,hc:S.hc,goals:S.goals,saved:Date.now()});
+const snapOf=()=>({phase:S.phase,raceName:S.raceName||'',order:S.order,pred:S.pred,marks:S.marks,def:S.def,total:S.total,unit:S.unit,markers:S.markers,cur:S.cur,final:S.final,nid:S.nid,rid:S.rid,epoch:S.epoch,invRid:S.invRid,hinv:S.hinv,hsel:S.hsel,hm:S.hm,hc:S.hc,goals:S.goals,lv:S.lv,saved:Date.now()});
 function saveState(){
   if(!SAVE_OK)return;
   try{
@@ -795,7 +700,7 @@ function saveState(){
 }
 function loadSnap(o){
   cancelAnimationFrame(S.raf);
-  Object.assign(S,{phase:o.phase,raceName:o.raceName||'',order:o.order||[],pred:o.pred||[],marks:o.marks||[],def:o.def||{label:'Marker 1',dist:''},total:o.total||'',unit:o.unit||'mi',goals:o.goals||{},markers:o.markers||[],cur:Math.min(o.cur||0,Math.max(0,(o.markers||[]).length-1)),final:o.final||0,nid:o.nid||1,rid:o.rid||'',epoch:o.epoch||0,invRid:o.invRid||'',hinv:o.hinv||null,hsel:o.hsel||[],hm:o.hm||[],hc:o.hc||0,modal:null});
+  Object.assign(S,{phase:o.phase,raceName:o.raceName||'',order:o.order||[],pred:o.pred||[],marks:o.marks||[],def:o.def||{label:'Marker 1',dist:''},total:o.total||'',unit:o.unit||'mi',goals:o.goals||{},markers:o.markers||[],cur:Math.min(o.cur||0,Math.max(0,(o.markers||[]).length-1)),final:o.final||0,nid:o.nid||1,rid:o.rid||'',epoch:o.epoch||0,invRid:o.invRid||'',hinv:o.hinv||null,hsel:o.hsel||[],hm:o.hm||[],hc:o.hc||0,lv:Object.assign(newLv(),o.lv||{}),modal:null});
   if(S.phase==='race')S.start=performance.now()-(Date.now()-S.epoch);
 }
 let SAVE_OK=false;
@@ -902,12 +807,11 @@ function resCode(){
 function importInvite(p,scanAt){
   if(S.phase[0]!=='h'){setFlash('That’s a helper invite — open the Helper tab first');return false}
   if(!Array.isArray(p.o)||!Array.isArray(p.mk))return false;
+  const keep=S.hinv&&S.hinv.r===p.r&&S.lv.hid;
   S.hinv={r:p.r,o:p.o,mk:p.mk,u:p.u||'',A:(scanAt!=null&&p.t!=null)?p.t-scanAt:null};
-  S.hsel=[];S.hm=[];S.hc=0;S.phase='hsetup';S.modal=null;
-  // Helpers automatically use live push when Firebase is configured
-  if(fbReady)S.live=true;
-  render();
-  setFlash(S.hinv.A!=null?'Invite loaded — clock matched'+(fbReady?' · live ready':''):'Invite loaded — clock not matched'+(fbReady?' · live ready':''));return true;
+  S.lv=Object.assign(newLv(),{hid:keep||Math.random().toString(36).slice(2,10),orid:S.lv.orid,src:S.lv.src});
+  S.hsel=[];S.hm=[];S.hc=0;S.phase='hsetup';S.modal=null;render();
+  setFlash(S.hinv.A!=null?'Invite loaded — clock matched':'Invite loaded — clock not matched');return true;
 }
 function importResult(p,scanAt){
   if(S.phase[0]==='h'){setFlash('Helper results go to the organizer’s phone');return false}
@@ -936,11 +840,11 @@ function liveModal(el,title,text,codeFn){
 }
 function inviteModal(el){liveModal(el,'Invite helpers','Helpers open the app, choose the <b>Helper</b> tab, and scan this QR. Finish names and markers before inviting helpers.',invCode)}
 function hresModal(el){liveModal(el,'Send to organizer','On the organizer’s phone choose <b>Import splits</b> and scan this QR. It changes every second to match clocks, so keep the screen steady until it’s read. You can send again after more splits.',resCode)}
-function hlap(){const k=S.hm[S.hc];if(!k||k.taps.length>=k.actual.length)return;k.taps.push(Date.now());if(S.live)scheduleHelperPush();render()}
+function hlap(){const k=S.hm[S.hc];if(!k||k.taps.length>=k.actual.length)return;k.taps.push(Date.now());render()}
 function drawHelper(){
   const a=$('#app'),inv=S.hinv;
   if(S.phase==='hhome'){
-    a.innerHTML=`<h1>Race Split Taker</h1>${modeSeg('help')}
+    a.innerHTML=`<h1>Race Split Taker</h1>${modeSeg('help')}${offToggle()}
     <p class="hint">Helpers time splits for an organizer. Ask the organizer to open <b>Invite helpers</b>, then scan their QR here. You don’t need the race clock — tap <b>Take split</b> each time a runner passes your marker, then drag the names into the order they came by.</p>
     <button class="p" id="hscan" style="width:100%">Scan organizer’s QR</button>
     ${inv?'<button class="s" id="hcont" style="width:100%;margin-top:10px">Continue current helper session</button>':''}
@@ -975,16 +879,208 @@ function drawHelper(){
   <div class="grid"><div class="slots" style="width:108px">${k.actual.map((_,i)=>`<div class="slot"><b>${ord(i)}${i<k.taps.length?' ✓':''}</b><span>${i===0&&k.taps.length?'Leader':i>0&&i<k.taps.length?'+'+fmt(k.taps[i]-k.taps[0]):'—'}</span></div>`).join('')}</div>
   <div class="list" id="act">${k.actual.map(id=>`<div class="row" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(nameOf(id))}</span></div>`).join('')}</div></div>
   <button class="p" id="hsend" style="width:100%;margin-top:12px">Send to organizer</button>
+  <div style="margin-top:12px">${offToggle(false)}</div>
   <div class="bar" style="margin-top:12px"><button class="s" id="hchg">Change markers</button><button class="s" id="hend">End session</button></div>`;
-  sortable($('#act'),ids=>{k.actual=ids.map(Number);if(S.live)scheduleHelperPush();render()});
+  sortable($('#act'),ids=>{k.actual=ids.map(Number);render()});
   $('#hlap').onclick=hlap;
-  $('#hundo').onclick=()=>{k.taps.pop();if(S.live)scheduleHelperPush();render()};
+  $('#hundo').onclick=()=>{k.taps.pop();render()};
   $('#hsend').onclick=()=>{S.modal={type:'hres'};render()};
   a.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{S.hc=+b.dataset.t;render()});
   $('#hchg').onclick=()=>{S.phase='hsetup';render()};
-  $('#hend').onclick=e=>{const b=e.target;if(!b.dataset.sure){b.dataset.sure='1';b.textContent='Tap again — discards times';return}S.hinv=null;S.hm=[];S.hsel=[];S.hc=0;S.phase='hhome';render()};
+  $('#hend').onclick=e=>{const b=e.target;if(!b.dataset.sure){b.dataset.sure='1';b.textContent=S.lv.dirty?'Not uploaded yet — tap again to discard':'Tap again — discards times';return}S.hinv=null;S.lv=newLv();S.hm=[];S.hsel=[];S.hc=0;S.phase='hhome';render()};
 }
 /*HELPER-END*/
+/*LIVE-START*/
+// ---- Live sync (Firebase Realtime Database) ----------------------------------------------------
+// Helpers write their splits to  races/<raceId>/h/<helperId>  and the organizer listens on  races/<raceId>/h.
+// Every helper tap is also stored on the phone (S.hm in localStorage). S.lv.dirty means "there are splits
+// that the server hasn't confirmed yet"; it is only cleared when the server acknowledges the write, so
+// nothing is lost if the signal drops or the app is closed, and it uploads itself when a connection returns.
+// Offline mode (S.offline) switches all of this off and leaves the QR flow exactly as it was.
+const FBV='10.14.1'; // keep in step with sw.js
+const FB={db:null,conn:false,so:null,load:null,gone:0,push:0,org:null,ref:null,cb:null,last:0};
+const LV={remote:{},pend:false,t:0,err:''};
+const isH=()=>S.phase[0]==='h';
+const fbOK=()=>{const c=window.FB_CONFIG;return !!(c&&c.databaseURL&&c.apiKey&&!/PASTE|YOUR/i.test(c.databaseURL+c.apiKey))};
+const liveOn=()=>fbOK()&&!S.offline;
+
+function setOffline(v){
+  S.offline=!!v;
+  try{localStorage.setItem('rst-offline-v1',v?'1':'0')}catch(e){}
+  render();
+  setFlash(v?'Offline mode on — use QR codes':fbOK()?'Live sync on':'Live sync isn’t set up yet');
+}
+function offToggle(withStatus){
+  return `<label class="chk"><input type="checkbox" id="offm" ${S.offline?'checked':''}><span>Offline mode (no internet, QR only)</span></label>`+(withStatus===false?'':`<p class="hint" id="lvs">${esc(liveStatus().t)}</p>`);
+}
+function bindOff(){const c=$('#offm');if(c)c.onchange=()=>setOffline(c.checked)}
+function liveBadge(){
+  if(!(S.phase==='race'||S.phase==='done'||S.phase==='htime'))return;
+  const h=document.querySelector('#app h1');if(!h)return;
+  h.insertAdjacentHTML('afterend','<p class="hint lvb" id="lvb"></p>');
+  updLive();
+}
+function updLive(){const t=liveStatus().t,a=$('#lvs'),b=$('#lvb');if(a)a.textContent=t;if(b)b.textContent=t}
+const nTaps=()=>S.hm.reduce((a,k)=>a+k.taps.length,0);
+function liveStatus(){
+  const h=isH(),run=S.phase==='race'||S.phase==='done';
+  if(!fbOK())return{t:'Live sync isn’t set up in this copy of the app — use QR codes.'};
+  if(S.offline){
+    if(h)return{t:nTaps()&&S.lv.dirty?'Offline mode — splits stay on this phone. Turn offline mode off to upload them, or use Send to organizer (QR).':'Offline mode — use Send to organizer (QR).'};
+    return{t:'Offline mode — import helper results with QR codes.'};
+  }
+  if(LV.err)return{t:'Live sync blocked ('+LV.err+') — check the database rules.'};
+  if(!h&&!run)return{t:'Live sync on — helper splits arrive automatically once the race starts. QR still works too.'};
+  if(h&&!S.hinv)return{t:'Live sync on — scan the organizer’s invite and your splits upload automatically.'};
+  if(!FB.db||!FB.conn){
+    if(!h)return{t:'No connection — helper splits will appear when you’re back online.'};
+    const n=nTaps();
+    return{t:n?`No connection — ${n} split${n===1?'':'s'} saved on this phone, uploading automatically when you’re back online.`:'No connection — splits are saved on this phone and upload automatically when you’re back online.'};
+  }
+  if(h)return{t:S.lv.dirty?'Live — uploading…':'Live — all splits uploaded ✓'};
+  const c=Object.values(LV.remote||{}).filter(x=>x&&x.m).length;
+  return{t:'Live — '+(c?c+' helper'+(c===1?'':'s')+' sending':'waiting for helpers')};
+}
+
+function ensureFB(){
+  if(FB.db)return Promise.resolve(true);
+  if(FB.load)return FB.load;
+  if(Date.now()-FB.last<6000)return Promise.resolve(false);
+  FB.last=Date.now();
+  const base='https://www.gstatic.com/firebasejs/'+FBV+'/';
+  const ld=src=>new Promise((ok,no)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=()=>{s.remove();no(new Error('load'))};document.head.appendChild(s)});
+  const p=(async()=>{
+    try{
+      if(!window.firebase)await ld(base+'firebase-app-compat.js');
+      if(!firebase.database)await ld(base+'firebase-database-compat.js');
+      if(!firebase.apps.length)firebase.initializeApp(window.FB_CONFIG);
+      FB.db=firebase.database();
+      FB.db.ref('.info/connected').on('value',s=>{FB.conn=!!s.val();if(FB.conn)LV.err='';updLive();if(FB.conn)liveStep()});
+      FB.db.ref('.info/serverTimeOffset').on('value',s=>{FB.so=s.val()});
+      return true;
+    }catch(e){FB.db=null;return false}
+  })();
+  FB.load=p;p.then(()=>{FB.load=null});
+  return p;
+}
+
+// Decides what this phone should be doing right now (listening, uploading, or nothing). Safe to call any time.
+async function liveStep(){
+  const run=(S.phase==='race'||S.phase==='done')&&!!S.rid,want=isH()?!!S.hinv:run;
+  if(!want||!fbOK()){orgDetach();updLive();return}
+  if(S.offline&&!FB.db){updLive();return}
+  if(!(await ensureFB())){updLive();return}
+  if(S.offline){if(!FB.gone){FB.db.goOffline();FB.gone=1;FB.conn=false}updLive();return}
+  if(FB.gone){FB.db.goOnline();FB.gone=0}
+  if(isH()){orgDetach();liveFlush()}else orgAttach();
+  updLive();
+}
+// Called from render(): notices helper changes (new tap, undo, reorder) and marks them as not yet uploaded.
+function liveTick(){
+  const L=S.lv;
+  if(isH()){
+    if(S.hinv&&S.hm){
+      const core=hCore(),sig=JSON.stringify(core);
+      if(sig!==L.sig){const first=!L.sig&&!Object.keys(core.m).length;L.sig=sig;if(!first){L.ver++;L.dirty=1}}
+    }
+  }else if(L.orid!==S.rid){L.orid=S.rid;L.src={}}
+  liveStep();
+}
+
+// ---- helper side: upload ----
+function hCore(){
+  const m={};
+  S.hm.forEach(k=>{if(k.taps.length)m['k'+k.idx]={a:k.actual.slice(0,k.taps.length),t:k.taps}});
+  return{m,A:S.hinv.A==null?null:Math.round(S.hinv.A)};
+}
+async function liveFlush(){
+  const L=S.lv;
+  if(!L.dirty||!S.hinv||!L.hid||!liveOn()||FB.push)return;
+  if(!FB.db||!FB.conn)return;
+  const v=L.ver,core=hCore(),path='races/'+S.hinv.r+'/h/'+L.hid;
+  FB.push=1;
+  let fin=false;
+  const done=ok=>{
+    if(fin)return;fin=true;clearTimeout(to);FB.push=0;
+    if(ok){LV.err='';if(S.lv===L&&L.ver===v){L.dirty=0;saveState()}}
+    updLive();
+    if(S.lv===L&&L.dirty)setTimeout(liveStep,ok?60:4000);
+  };
+  const to=setTimeout(()=>done(false),12000);
+  try{
+    await FB.db.ref(path).set({...core,off:FB.so==null?null:FB.so,ts:firebase.database.ServerValue.TIMESTAMP});
+    done(true);
+  }catch(e){LV.err=(e&&e.code)||'error';done(false)}
+}
+
+// ---- organizer side: listen and merge ----
+function orgAttach(){
+  if(FB.org===S.rid&&FB.ref)return;
+  orgDetach();
+  FB.org=S.rid;
+  FB.ref=FB.db.ref('races/'+S.rid+'/h');
+  FB.cb=s=>{LV.err='';LV.remote=s.val()||{};LV.pend=true;pump();updLive()};
+  FB.ref.on('value',FB.cb,e=>{LV.err=(e&&e.code)||'error';updLive()});
+}
+function orgDetach(){
+  if(FB.ref){try{FB.ref.off('value',FB.cb)}catch(e){}}
+  FB.ref=null;FB.org=null;LV.remote={};
+}
+// Never change the race data under the organizer's finger: wait while they are dragging, typing or in a dialog.
+const busy=()=>document.body.classList.contains('dragging')||(S.modal&&S.modal.type!=='invite')||/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement||{}).tagName||'');
+function pump(){
+  if(!LV.pend)return;
+  if(busy()){clearTimeout(LV.t);LV.t=setTimeout(pump,700);return}
+  LV.pend=false;
+  if(!(S.phase==='race'||S.phase==='done')||S.rid!==FB.org)return;
+  const before=JSON.stringify(S.markers);
+  orgMerge(LV.remote||{});
+  if(JSON.stringify(S.markers)!==before){render();setFlash('Live: helper splits updated')}else saveState();
+}
+// Clock shift from a helper's phone to this phone. A = from scanning the invite QR; off = difference of the two phones' Firebase server offsets.
+function shiftOf(h){
+  const a=h.A!=null?+h.A:null,b=(h.off!=null&&FB.so!=null)?(+h.off-FB.so):null;
+  if(a!=null&&b!=null)return Math.abs(a-b)>2000?a:(a+b)/2;
+  return a!=null?a:(b!=null?b:0);
+}
+function orgMerge(remote){
+  const keys=new Set(Object.keys(S.lv.src));
+  Object.keys(remote).forEach(hid=>{const h=remote[hid];if(h&&h.m)Object.keys(h.m).forEach(k=>keys.add(hid+'|'+k))});
+  keys.forEach(key=>{
+    const i=key.indexOf('|'),hid=key.slice(0,i),mk=key.slice(i+1),idx=+mk.slice(1),L=S.markers[idx];
+    if(!L)return;
+    const h=remote[hid],e=h&&h.m&&h.m[mk],pairs=[];
+    if(e){
+      const a=Array.from(e.a||[]),t=Array.from(e.t||[]),D=shiftOf(h);
+      a.forEach((id,j)=>{if(t[j]!=null&&byId(id))pairs.push([+id,Math.max(0,Math.round(t[j]+D-S.epoch))])});
+    }
+    applyHelper(L,pairs,key);
+  });
+}
+// Times a helper supplied earlier are swapped for their latest version (so a helper fixing the order or undoing a tap
+// carries through), but a time the organizer entered or edited themselves is never overwritten.
+function applyHelper(L,pairs,key){
+  const prev=S.lv.src[key]||{},have=new Map(),orig=new Map();
+  L.actual.forEach((id,i)=>{if(L.laps[i]!=null){have.set(id,L.laps[i]);orig.set(id,L.laps[i])}});
+  Object.keys(prev).forEach(k=>{const id=+k;if(have.get(id)===prev[k])have.delete(id)});
+  const mine={};
+  pairs.forEach(([id,t])=>{if(!have.has(id)){have.set(id,t);mine[id]=t}});
+  let same=have.size===orig.size;
+  if(same)have.forEach((t,id)=>{if(orig.get(id)!==t)same=false});
+  if(Object.keys(mine).length)S.lv.src[key]=mine;else delete S.lv.src[key];
+  if(same)return;
+  const ids=[...L.actual];
+  pairs.forEach(([id])=>{if(!ids.includes(id))ids.push(id)});
+  const timed=ids.filter(id=>have.has(id)).sort((x,y)=>have.get(x)-have.get(y));
+  const rest=ids.filter(id=>!have.has(id));
+  L.actual=[...timed,...rest];L.laps=timed.map(id=>have.get(id));
+}
+
+window.addEventListener('online',liveStep);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)liveStep()});
+setInterval(()=>{if(S.lv.dirty||(liveOn()&&!FB.db))liveStep()},6000);
+/*LIVE-END*/
+
 function mergeRunners(a,b){
   S.markers.forEach(L=>{
     const ib=L.actual.indexOf(b);if(ib<0)return;
@@ -1024,9 +1120,7 @@ function removeRunner(id){
 function startRace(){
   S.pred=S.order.map(p=>String(p.id));
   S.markers=mks().map((k,i)=>{const useTot=!S.marks.length&&k.dist===''&&+S.total>0;const m={label:k.label,dist:useTot?S.total:k.dist,unit:useTot?S.unit:(k.unit||S.unit),actual:S.order.map(p=>p.id),laps:[]};relabel(m,i);return m});S.cur=0;
-  S.final=0;S.rid=S.invRid||Math.random().toString(36).slice(2,8);S.invRid='';S.epoch=Date.now();S.phase='race';S.start=performance.now();
-  if(S.live&&fbReady){pushRaceMeta();startOrganizerListen()}
-  render();tick();
+  S.final=0;S.rid=S.invRid||Math.random().toString(36).slice(2,8);S.invRid='';S.epoch=Date.now();S.phase='race';S.start=performance.now();render();tick();
 }
 function addMarker(){
   S.markers.push({label:'Marker '+(S.markers.length+1),dist:'',unit:M().unit||S.unit,actual:[...M().actual],laps:[]});
@@ -1044,8 +1138,6 @@ function finish(){
   S.final=performance.now()-S.start;S.phase='done';cancelAnimationFrame(S.raf);render();
 }
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!S.modal&&!['INPUT','SELECT','BUTTON'].includes(e.target.tagName)){if(S.phase==='race'){e.preventDefault();lap()}else if(S.phase==='htime'){e.preventDefault();hlap()}}});
-try{S.live=localStorage.getItem('rst-live')==='1'}catch(e){}
-initFirebase();
 render();
 try{restore()}catch(e){}
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));

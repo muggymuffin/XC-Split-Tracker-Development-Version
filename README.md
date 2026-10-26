@@ -85,7 +85,7 @@ A stopwatch for timing teams at several distance markers. Drag runners into fini
   - **Paste** (or paste by hand) the text code, then tap **Import**.
 - **New race** — if the phone has no race, or the code is a different race, it loads the whole race (names, markers, distances, splits) and the clock stays in sync.
 - **Same race** — if the phone already has that race, importing only **fills in what's missing** (runners, markers, splits). Nothing already recorded is overwritten, so two phones can time different markers and swap codes to combine.
-- Sync happens when you import, not live. Use **Refresh** in the export screen after taking more splits.
+- Export/import codes sync when you import, not live. Use **Refresh** in the export screen after taking more splits. (Helper splits can also arrive live — see below.)
 - **Scanner note** — scanning needs the `jsQR.js` file in the app folder. Without it, use Paste.
 
 ---
@@ -116,6 +116,19 @@ A stopwatch for timing teams at several distance markers. Drag runners into fini
 
 ---
 
+## Live sync for helpers (optional)
+
+Set it up once with `FIREBASE-SETUP.md`. Then, with internet or cell service:
+
+- Helpers scan the organizer's invite as usual; every tap uploads automatically, and the organizer's screen updates by itself. The status line under the title shows what's happening.
+- **If a helper loses signal**, taps stay saved on their phone and upload automatically when the connection returns (even after closing and reopening the app). The status line says how many splits are waiting.
+- A helper who fixes the order or undoes a tap sees the organizer's copy update too. Times the organizer typed or edited themselves are never overwritten.
+- Clock matching uses the invite scan when there is one, averaged with the phones' Firebase server clocks.
+- **Offline mode** (checkbox on the first screen and on helper screens) turns off all internet use. QR export/import works exactly as before, and anything waiting uploads once offline mode is turned off.
+- If live sync isn't set up, or the phone has never been online with the app, everything still works with QR codes.
+
+---
+
 ## Saving
 
 - **Automatic** — the race saves on the phone after every split and edit.
@@ -131,50 +144,3 @@ A stopwatch for timing teams at several distance markers. Drag runners into fini
 - **QRCode for JavaScript** (QR code generation, `qrgen.js`) by Kazuhiko Arase, licensed under the MIT License, obtained via qrcode-terminal by Gord Tanner and Michael Brooks (Apache License 2.0).
 
 The app also shows these credits in-app: tap **Credits & licenses** at the bottom of the first screen (Organizer or Helper). Full license texts are in `THIRD-PARTY-LICENSES.txt`. Keep that file and the notice comments at the top of `jsQR.js` and `qrgen.js` when you copy or host the app. "QR Code" is a registered trademark of DENSO WAVE INCORPORATED.
-
----
-
-## Live helper updates (Firebase)
-
-Helpers can push splits to the organizer in real time over the internet (or cell data). The QR system still works as a full offline backup. Writes are queued by the Firebase SDK when the connection drops and are sent automatically when signal returns.
-
-### One-time setup (organizer / coach)
-
-1. Go to [Firebase Console](https://console.firebase.google.com) and create a project (or open an existing one). The free Spark plan is enough.
-2. Click the web icon **</>** to add a web app. You can leave “Also set up Firebase Hosting” unchecked.
-3. Copy the `firebaseConfig` object that appears.
-4. Open `index.html` in this repo and paste the values into the `FIREBASE_CONFIG` object near the top of the `<script>` block (uncomment the lines and fill them in).
-5. In the Firebase console go to **Build → Realtime Database → Create Database**. Choose any location, then **Start in locked mode**.
-6. Open the **Rules** tab and replace the rules with:
-
-```json
-{
-  "rules": {
-    "races": {
-      "$rid": {
-        ".read": true,
-        ".write": true,
-        ".validate": "newData.hasChildren(['meta']) || data.exists()"
-      }
-    }
-  }
-}
-```
-
-Then click **Publish**. (Anyone who knows a race ID can read/write that race. Race IDs are short random strings; delete old races from the console after meets if you prefer.)
-
-7. Under **Project settings → General → Your apps**, open your web app and add your GitHub Pages domain (for example `yourusername.github.io`) to **Authorized domains**.
-8. Commit and push the updated `index.html` (and the two new `firebase-*-compat.js` files). After the site updates, open the app once with signal so the new service-worker cache is stored.
-
-### Using live mode
-
-- On the Organizer setup screen, turn on **Live helper updates (Firebase)**.
-- Start the race as usual. Helpers still scan the invite QR (or paste the code).
-- When a helper takes a split or reorders names, the data is written to Firebase. The organizer’s phone listens and merges the splits automatically (only filling times that are still missing, same as QR import).
-- Status line under the toggle shows **Live · online** or **Live · offline (queued)**.
-- If anyone loses signal, splits stay on their phone and upload the next time the connection returns. QR codes continue to work as a backup at any time.
-
-### Privacy note
-
-Runner names travel through Google’s servers for that race. Prefer first names or initials, use a fresh race for each meet, and delete the race node in the Firebase console afterward if desired.
-
