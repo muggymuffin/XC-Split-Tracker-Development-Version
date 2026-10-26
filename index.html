@@ -952,7 +952,17 @@ function liveStatus(){
 }
 
 function ensureFB(){
-  if(FB.db)return Promise.resolve(true);
+  if(FB.db&&FB.conn)return Promise.resolve(true);
+  if(FB.db&&!FB.conn){
+    // SDK already loaded; wait briefly for the connected flag
+    return new Promise(ok=>{
+      let n=0;
+      const t=setInterval(()=>{
+        if(FB.conn){clearInterval(t);ok(true)}
+        else if(++n>40){clearInterval(t);ok(!!FB.db)}
+      },100);
+    });
+  }
   if(FB.load)return FB.load;
   if(Date.now()-FB.last<6000)return Promise.resolve(false);
   FB.last=Date.now();
@@ -964,8 +974,14 @@ function ensureFB(){
       if(!firebase.database)await ld(base+'firebase-database-compat.js');
       if(!firebase.apps.length)firebase.initializeApp(window.FB_CONFIG);
       FB.db=firebase.database();
-      FB.db.ref('.info/connected').on('value',s=>{FB.conn=!!s.val();if(FB.conn)LV.err='';updLive();if(FB.conn)liveStep()});
+      FB.db.ref('.info/connected').on('value',s=>{FB.conn=!!s.val();if(FB.conn){LV.err='';updLive();liveStep()}});
       FB.db.ref('.info/serverTimeOffset').on('value',s=>{FB.so=s.val()});
+      // Wait up to ~4s for the first connected=true so the first publish isn't skipped
+      await new Promise(ok=>{
+        if(FB.conn)return ok();
+        let n=0;
+        const t=setInterval(()=>{if(FB.conn||++n>40){clearInterval(t);ok()}},100);
+      });
       return true;
     }catch(e){FB.db=null;return false}
   })();
@@ -1031,18 +1047,23 @@ function oCore(){
     mk:S.markers.map(k=>[k.label,k.dist,k.unit||S.unit,k.actual,k.laps.map(x=>x==null?null:Math.round(x))])};
 }
 // Sent as one JSON string so Firebase never reshapes the arrays; debounced, and re-sent after a reconnect.
-function orgPublish(){
-  if(!(S.phase==='race'||S.phase==='done')||!S.rid||!FB.db||!FB.conn||S.offline)return;
+function orgPublish(force){
+  if(!(S.phase==='race'||S.phase==='done')||!S.rid||!FB.db||S.offline)return;
   const d=JSON.stringify(oCore());
-  if(d===LV.osent&&LV.srid===S.rid)return;
+  if(!force&&d===LV.osent&&LV.srid===S.rid)return;
   clearTimeout(LV.ot);
-  LV.ot=setTimeout(()=>{
+  const attempt=()=>{
     const rid=S.rid;
-    if(!FB.db||!FB.conn)return;
-    FB.db.ref('races/'+rid+'/h/_org').set({d,off:FB.so==null?null:FB.so,ts:firebase.database.ServerValue.TIMESTAMP})
-      .then(()=>{LV.osent=d;LV.srid=rid;LV.err='';updLive()})
-      .catch(liveErr);
-  },250);
+    if(!FB.db||!(S.phase==='race'||S.phase==='done')||S.offline)return;
+    if(!FB.conn){LV.ot=setTimeout(attempt,500);return}
+    const ts=(firebase.database&&firebase.database.ServerValue&&firebase.database.ServerValue.TIMESTAMP)||Date.now();
+    try{
+      FB.db.ref('races/'+rid+'/h/_org').set({d,off:FB.so==null?null:FB.so,ts})
+        .then(()=>{LV.osent=d;LV.srid=rid;LV.err='';updLive()})
+        .catch(e=>{liveErr(e);LV.ot=setTimeout(attempt,3000)});
+    }catch(e){liveErr(e);LV.ot=setTimeout(attempt,3000)}
+  };
+  LV.ot=setTimeout(attempt,force?0:250);
 }
 function hAttach(){
   const rid=S.hinv.r;
@@ -1239,7 +1260,11 @@ function applyHelper(L,pairs,key){
 
 window.addEventListener('online',liveStep);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)liveStep()});
-setInterval(()=>{if(S.lv.dirty||(liveOn()&&!FB.db))liveStep()},6000);
+setInterval(()=>{
+  if(S.lv.dirty||(liveOn()&&!FB.db))liveStep();
+  // Keep re-publishing organizer state so helpers that join late still get the clock
+  if(liveOn()&&!S.offline&&(S.phase==='race'||S.phase==='done')&&S.rid)orgPublish(true);
+},6000);
 setInterval(()=>hUpdate(false),50);
 /*LIVE-END*/
 
@@ -1282,7 +1307,12 @@ function removeRunner(id){
 function startRace(){
   S.pred=S.order.map(p=>String(p.id));
   S.markers=mks().map((k,i)=>{const useTot=!S.marks.length&&k.dist===''&&+S.total>0;const m={label:k.label,dist:useTot?S.total:k.dist,unit:useTot?S.unit:(k.unit||S.unit),actual:S.order.map(p=>p.id),laps:[]};relabel(m,i);return m});S.cur=0;
-  S.final=0;S.rid=S.invRid||Math.random().toString(36).slice(2,8);S.invRid='';S.epoch=Date.now();S.phase='race';S.start=performance.now();render();tick();
+  S.final=0;S.rid=S.invRid||Math.random().toString(36).slice(2,8);S.invRid='';S.epoch=Date.now();S.phase='race';S.start=performance.now();
+  LV.osent='';LV.srid=''; // force a fresh publish for the new race
+  render();tick();
+  // Ensure the organizer payload is written even if the first liveStep raced the connection
+  setTimeout(()=>orgPublish(true),500);
+  setTimeout(()=>orgPublish(true),2000);
 }
 function addMarker(){
   S.markers.push({label:'Marker '+(S.markers.length+1),dist:'',unit:M().unit||S.unit,actual:[...M().actual],laps:[]});
@@ -1293,11 +1323,11 @@ function tick(){const c=$('#clk');if(c&&S.phase==='race'){c.textContent=fmt(now(
 function lap(){
   if(S.phase!=='race')return;const m=M();
   if(m.laps.length>=m.actual.length)return;
-  m.laps.push(performance.now()-S.start);render();
+  m.laps.push(performance.now()-S.start);render();orgPublish();
 }
 function finish(){
   if(S.phase!=='race')return;
-  S.final=performance.now()-S.start;S.phase='done';cancelAnimationFrame(S.raf);render();
+  S.final=performance.now()-S.start;S.phase='done';cancelAnimationFrame(S.raf);render();orgPublish(true);
 }
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!S.modal&&!['INPUT','SELECT','BUTTON'].includes(e.target.tagName)){if(S.phase==='race'){e.preventDefault();lap()}else if(S.phase==='htime'){e.preventDefault();hlap()}}});
 // Rapid taps on Take split must never zoom the page: no double-tap zoom (touch-action above) and no pinch zoom.
