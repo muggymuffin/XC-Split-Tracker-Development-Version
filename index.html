@@ -876,9 +876,12 @@ function drawHelper(){
   <button class="p lap" id="hlap" ${full?'disabled':''}>${full?'All splits taken here':'Take split · '+ord(k.taps.length)+' runner'}</button>
   <div class="bar"><button class="s" id="hundo" ${k.taps.length?'':'disabled'}>Undo last</button><button class="s" id="hsort" ${full?'disabled':''}>Sort waiting by arrival</button></div>
   ${tabsHTML(S.hm.map((m,i)=>`<button class="tab ${i===S.hc?'on':''}" data-t="${i}">${esc(m.label)} · ${m.taps.length}/${m.actual.length}</button>`).join(''))}
-  <p class="hint">Press and drag ⇅ to put names in the order they passed. Gaps show how far behind 1st each runner was.</p>
-  <div class="grid"><div class="slots" style="width:108px">${k.actual.map((_,i)=>`<div class="slot"><b>${ord(i)}${i<k.taps.length?' ✓':''}</b>${hSlot(k,i)}</div>`).join('')}</div>
-  <div class="list" id="act">${k.actual.map(id=>`<div class="row" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(nameOf(id))}<small class="hi"></small></span></div>`).join('')}</div></div>
+  <p class="hint">Press and drag ⇅ to put names in the order they passed. Gaps show how far behind 1st each runner was. Splits taken by the organizer or other helpers fill in automatically.</p>
+  <div class="grid"><div class="slots">${k.actual.map((_,i)=>`<div class="slot"><b>${ord(i)}</b>${hSlot(k,i)}</div>`).join('')}</div>
+  <div class="list" id="act">${k.actual.map((id,i)=>{
+    const timed=i<k.taps.length;
+    return `<div class="row" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(nameOf(id))}<small><span class="gd"></span><span class="hi"></span></small></span></div>`;
+  }).join('')}</div></div>
   <button class="p" id="hsend" style="width:100%;margin-top:12px">Send to organizer</button>
   <div style="margin-top:12px">${offToggle(false)}</div>
   <div class="bar" style="margin-top:12px"><button class="s" id="hchg">Change markers</button><button class="s" id="hend">End session</button></div>`;
@@ -1083,9 +1086,12 @@ const hShift=()=>shiftCombine(S.hinv&&S.hinv.A!=null?+S.hinv.A:null,(HO.off!=nul
 const hElapsedAt=t=>HO.m?Math.max(0,t+hShift()-HO.m.ep):null;
 function hElapsed(){const o=HO.m;if(!o||!S.hinv)return null;if(o.ph==='race')return Math.max(0,Date.now()+hShift()-o.ep);if(o.ph==='done')return o.fin;return null}
 function hSlot(k,i){
+  // Match organizer slots: main time + gap under it
   if(i>=k.taps.length)return'<span>—</span>';
-  const el=hElapsedAt(k.taps[i]),gap=i>0?'+'+fmt(k.taps[i]-k.taps[0]):'Leader';
-  return el==null?`<span>${gap}</span>`:`<span>${fmt(el)}</span><small>${gap}</small>`;
+  const el=hElapsedAt(k.taps[i]);
+  const gap=i>0&&k.taps[i]!=null&&k.taps[i-1]!=null?'+'+fmt(k.taps[i]-k.taps[i-1]):'';
+  if(el==null)return`<span>${i===0?'Leader':gap||'—'}</span>${gap&&i>0?'<small>'+gap+'</small>':''}`;
+  return`<span>${fmt(el)}</span>${gap?'<small>'+gap+'</small>':''}`;
 }
 // Runs fn with the organizer's published race loaded into S, so goalState / recentPace / etc. work unchanged on a helper phone.
 function withOrg(fn){
@@ -1103,7 +1109,11 @@ function withOrg(fn){
   }finally{Object.assign(S,sv)}
 }
 function hUpdate(force){
-  if(HO.sp&&HO.m&&S.hinv&&isH()&&!busy()){HO.sp=false;if(hSync()){render();setFlash('Runners or markers updated by the organizer')}}
+  if(HO.sp&&HO.m&&S.hinv&&isH()&&!busy()){
+    HO.sp=false;
+    const syncCh=hSync(),pullCh=hPullSplits();
+    if(syncCh||pullCh){render();if(syncCh)setFlash('Runners or markers updated by the organizer');else if(pullCh)setFlash('Live: splits from organizer / other helpers');return}
+  }
   if(S.phase!=='htime'||!S.hinv)return;
   const c=$('#hclk'),f=$('#hfp'),ms=hElapsed();
   if(c){if(ms==null)c.style.display='none';else{c.style.display='';c.textContent=fmt(ms)}}
@@ -1119,6 +1129,39 @@ function hUpdate(force){
     })||'';
   }
   if(HO.m)hRows(ms);
+}
+// When the organizer or another helper already timed a runner at one of this phone's markers,
+// fold those times into the local taps so the slots and order match what everyone else sees.
+function hPullSplits(){
+  if(!HO.m||!S.hm||!S.hm.length)return false;
+  const sh=hShift(),ep=HO.m.ep;if(ep==null)return false;
+  let ch=false;
+  withOrg(()=>{
+    S.hm.forEach(k=>{
+      const m=S.markers[k.idx];if(!m)return;
+      const remote=new Map();
+      m.actual.forEach((id,i)=>{if(m.laps[i]!=null)remote.set(+id,+m.laps[i])});
+      if(!remote.size)return;
+      const local=new Map();
+      for(let i=0;i<k.taps.length;i++)local.set(+k.actual[i],k.taps[i]);
+      let added=0;
+      remote.forEach((rel,id)=>{
+        if(local.has(id))return;
+        if(!k.actual.some(x=>+x===id))return;
+        // Convert race-relative ms to this phone's absolute wall time
+        local.set(id,Math.round(rel-sh+ep));
+        added++;
+      });
+      if(!added)return;
+      const pairs=[...local.entries()].sort((a,b)=>a[1]-b[1]);
+      const have=new Set(pairs.map(p=>p[0]));
+      const rest=k.actual.filter(id=>!have.has(+id));
+      k.actual=[...pairs.map(p=>p[0]),...rest];
+      k.taps=pairs.map(p=>p[1]);
+      ch=true;
+    });
+  });
+  return ch;
 }
 // Estimated race time (ms) a runner reaches marker m: from their own recent pace (~), else the field's pace (≈).
 function hEst(id,m,cd,gp){
@@ -1167,29 +1210,48 @@ function hSort(){
   k.actual=[...k.actual.slice(0,n),...has,...none];
   render();setFlash('Waiting runners sorted by estimated arrival');
 }
-// Per-runner line under each name: goal gap, estimated arrival here, and current pace, from everyone's splits.
+// Per-runner line under each name — same layout as the organizer: goal in .gd, estimates/pace in .hi, row color from goal state.
 function hRows(ms){
   const k=S.hm[S.hc],rows=document.querySelectorAll('#act .row[data-id]');
-  if(!k||!rows.length)return;
+  if(!k||!rows.length||!HO.m)return;
   const sh=hShift(),ep=HO.m.ep;
   withOrg(()=>{
-    const m=M(),D=totKm(),cd=distKm(m),run=S.phase==='race',u=S.unit;
+    const m=S.markers[k.idx]||M(),D=totKm(),cd=distKm(m),run=S.phase==='race',u=S.unit;
     const ps=S.order.map(p=>recentPace(p.id)).filter(Boolean).map(i=>i.pace);
     const gp=ps.length?ps.reduce((x,y)=>x+y,0)/ps.length:null;
     rows.forEach((row,i)=>{
-      const id=+row.dataset.id,parts=[],r=recentPace(id);let st=null;
+      const id=+row.dataset.id,parts=[],r=recentPace(id);let st=null,gd='';
       if(i<k.taps.length){
+        // Already timed (by this helper or pulled from organizer/others)
         const el=Math.max(0,k.taps[i]+sh-ep),g=S.goals[id];
-        if(g>0&&D>0&&cd>0){const exp=g*Math.min(cd,D)/D,diff=el-exp;parts.push((diff>0?'+':'−')+fmtE(Math.abs(diff)));st=diff>0?'bad':diff>=-Math.max(3000,exp*GOAL_TOL)?'near':'ok'}
+        if(g>0&&D>0&&cd>0){
+          const exp=g*Math.min(cd,D)/D,diff=el-exp;
+          gd=(diff>0?'+':'−')+fmtE(Math.abs(diff));
+          st=diff>0?'bad':diff>=-Math.max(3000,exp*GOAL_TOL)?'near':'ok';
+        }
       }else{
         const gs=goalState(id,ms),gt=goalText(id,ms),have=timeAt(m,id);
-        if(gt)parts.push(gt);
+        if(gt)gd=gt;
         st=gs?gs.st:null;
         if(have!=null)parts.push('✓ '+fmtE(have));
-        else if(run){const es=hEst(id,m,cd,gp);if(es)parts.push(es.t<=ms?'Due now':'Arr '+es.sy+fmtE(es.t))}
+        else if(run){
+          // Match organizer estLine: Arr / Fin estimates
+          const es=hEst(id,m,cd,gp);
+          if(es){
+            if(es.t<=ms)parts.push('Due now');
+            else parts.push('Arr '+es.sy+fmtE(es.t));
+          }
+          if(D>0&&gp!=null){
+            const r2=recentPace(id);let pc,b,sy;
+            if(r2){pc=r2.pace;b={d:r2.d,t:r2.t};sy='~'}else{pc=gp;b={d:0,t:0};sy='≈'}
+            if(D>b.d)parts.push('Fin '+sy+fmtE(b.t+pc*(D-b.d)));
+          }
+        }
       }
       if(r)parts.push(fmtE(r.pace*KMF(u))+'/'+u);
-      const el=row.querySelector('.hi');if(el)el.textContent=parts.join(' · ');
+      const gdEl=row.querySelector('.gd'),hiEl=row.querySelector('.hi');
+      if(gdEl)gdEl.textContent=gd;
+      if(hiEl)hiEl.textContent=(gd&&parts.length?' ':'')+parts.join(' · ');
       row.classList.remove('g-ok','g-near','g-bad');if(st)row.classList.add('g-'+st);
     });
   });
