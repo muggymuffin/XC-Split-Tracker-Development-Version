@@ -490,33 +490,52 @@ async function redeemUnlockCode(raw){
   }
   if(!pre.exists())throw new Error('Code not found — key under codes/ must match exactly (CULVER-XC)');
   const v0=pre.val()||{};
-  if((+v0.used||0)>=Math.max(1,+v0.maxUses||1))throw new Error('This code has no redemptions left');
+  const max0=Math.max(1,+v0.maxUses||1),used0=Math.max(0,+v0.used||0);
+  if(used0>=max0)throw new Error('This code has no redemptions left');
+  // RTDB transactions often get a first pass with null local data; returning undefined aborts.
+  // Use the pre-read as a fallback so the first pass still returns a valid update.
   let tx;
   try{
     tx=await ref.transaction(cur=>{
-      if(cur==null)return;
-      const max=Math.max(1,+cur.maxUses||1),used=Math.max(0,+cur.used||0);
+      const c=cur||v0;
+      if(!c)return;
+      const max=Math.max(1,+c.maxUses||1),used=Math.max(0,+c.used||0);
       if(used>=max)return;
       return{
         maxUses:max,
         used:used+1,
-        host:cur.host===undefined?true:cur.host,
-        live:cur.live===undefined?false:!!cur.live,
-        hours:cur.hours==null?24:+cur.hours
+        host:c.host===undefined?true:c.host,
+        live:c.live===undefined?false:!!c.live,
+        hours:c.hours==null?24:+c.hours
       };
     });
   }catch(e){
     if((e&&e.code)==='PERMISSION_DENIED')throw new Error('Database rules block redeeming — add the codes rules and Publish');
     throw new Error((e&&e.message)||'Redeem failed');
   }
-  if(!tx.committed){
-    const snap=await ref.once('value');
-    if(!snap.exists())throw new Error('Code not found');
-    const v=snap.val()||{};
-    if((+v.used||0)>=Math.max(1,+v.maxUses||1))throw new Error('This code has no redemptions left');
-    throw new Error('Could not redeem — try again');
+  let d=tx&&tx.committed?tx.snapshot.val():null;
+  // Fallback: plain update if the transaction still did not commit
+  if(!d){
+    try{
+      const again=await ref.once('value');
+      if(!again.exists())throw new Error('Code not found');
+      const c=again.val()||{};
+      const max=Math.max(1,+c.maxUses||1),used=Math.max(0,+c.used||0);
+      if(used>=max)throw new Error('This code has no redemptions left');
+      d={
+        maxUses:max,
+        used:used+1,
+        host:c.host===undefined?true:c.host,
+        live:c.live===undefined?false:!!c.live,
+        hours:c.hours==null?24:+c.hours
+      };
+      await ref.set(d);
+    }catch(e){
+      if((e&&e.code)==='PERMISSION_DENIED')throw new Error('Database rules block redeeming — add the codes rules and Publish');
+      if(e&&e.message&&e.message.indexOf('redemptions')>=0)throw e;
+      throw new Error((e&&e.message)||'Could not redeem — try again');
+    }
   }
-  const d=tx.snapshot.val()||{};
   const hours=Math.max(1,Math.min(24*30,+d.hours||24));
   const until=Date.now()+hours*3600*1000;
   const host=d.host!==false&&d.host!==0&&d.host!=='0';
