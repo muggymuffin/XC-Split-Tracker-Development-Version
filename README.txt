@@ -23,7 +23,7 @@ FILES (keep them all together in one folder)
    Keep jsQR.js in the same folder as index.html. Without it, Import still
    works by pasting the code.
 
-UPDATING: change sw.js's CACHE name (currently rst-v20 -> rst-v21) when you replace files
+UPDATING: change sw.js's CACHE name (currently rst-v11 -> rst-v12) when you replace files
 so phones pick up the new version.
 
 NEW IN THIS VERSION

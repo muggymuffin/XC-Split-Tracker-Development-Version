@@ -52,8 +52,8 @@ A stopwatch for timing teams at several distance markers. Drag runners into fini
 - **Take split** — the big button, labelled like "Take split · 1st runner". Tap it each time a runner crosses the marker. On a computer, the spacebar does the same.
 - **Put names in order** — drag **☰** on a name to match who actually crossed. Times stay with the place (1st, 2nd, ...), not with the name.
 - **Edit a time** — tap an underlined time and type a new one (`1:05.30` or `65.3`).
-- **Estimates** — each runner shows **Arr** (estimated arrival at the marker you're on) and **Fin** (estimated final time), worked out from the gap between their two most recent splits (or start to first split if they only have one). **~** means based on that runner's own splits; **≈** means they have none yet, so it uses the group's average.
-- **Goal times** — on the first screen, type a goal finish time (like 16:49, or 16.49) in the box next to each runner's name; it also shows on the Ready screen. Set the total race distance on the next screen. During the race each runner's row is colored for the marker you're viewing: **red** if they're any amount behind goal pace, **yellow** if they're ahead but close to falling behind (within 2% of the time they should have by that point, so the window grows with distance), and **green** if comfortably ahead. The number is how far behind (+) or ahead (−) of goal they were at that marker, and it doesn't change on earlier markers when later splits come in. A runner who hasn't crossed the current marker yet turns red once the clock passes their goal time for it. Goals are set before the race starts, and saving a team in **Team presets** saves each runner's goal with them.
+- **Prediction check** — each runner shows ▲ (finished better than predicted), ▼ (worse), or ✓ (as predicted).
+- **Estimates** — once a split is recorded, each runner shows **Arr** (estimated arrival at the marker you're on) and **Fin** (estimated final time). **~** means based on that runner's own average pace. **≈** means the runner has no split yet, so the group average is used. Estimates update with every split and aren't saved between races.
 - **Marker tabs** — tap a tab to switch markers. A new marker starts with the previous marker's order, so you only fix what changed.
 - **+ Marker** — adds another marker during the race.
 - **Change a marker's distance or unit** — use the boxes under the tabs. The marker's name updates automatically.
@@ -104,7 +104,7 @@ A stopwatch for timing teams at several distance markers. Drag runners into fini
 - **Pick your markers** — choose one or more. You can switch between them while timing.
 - **Take split** — tap it each time a runner passes. Each tap saves the exact time privately; the clock time isn't shown. A **✓** appears next to the place number instead, and every runner after the leader shows how far **behind 1st** they were (the leader shows "Leader").
 - **Drag ☰** to put the names in the order the runners came by. Times stay with the place (1st, 2nd, ...).
-- **Undo last** removes the most recent tap. Helpers can only undo the latest tap; the organizer can fix anything else after importing.
+- **Undo last** removes the most recent tap. To delete a mistaken tap in the middle, tap its ✓ and choose **Delete** (later splits move up one place).
 - **Send to organizer** shows a results QR. The organizer scans it. You can send again after taking more splits.
 - **Change markers** adds or drops markers; **End session** clears this phone's helper times (tap twice).
 - Helper sessions are saved on the phone, so closing the app doesn't lose your taps.
@@ -131,3 +131,50 @@ A stopwatch for timing teams at several distance markers. Drag runners into fini
 - **QRCode for JavaScript** (QR code generation, `qrgen.js`) by Kazuhiko Arase, licensed under the MIT License, obtained via qrcode-terminal by Gord Tanner and Michael Brooks (Apache License 2.0).
 
 The app also shows these credits in-app: tap **Credits & licenses** at the bottom of the first screen (Organizer or Helper). Full license texts are in `THIRD-PARTY-LICENSES.txt`. Keep that file and the notice comments at the top of `jsQR.js` and `qrgen.js` when you copy or host the app. "QR Code" is a registered trademark of DENSO WAVE INCORPORATED.
+
+---
+
+## Live helper updates (Firebase)
+
+Helpers can push splits to the organizer in real time over the internet (or cell data). The QR system still works as a full offline backup. Writes are queued by the Firebase SDK when the connection drops and are sent automatically when signal returns.
+
+### One-time setup (organizer / coach)
+
+1. Go to [Firebase Console](https://console.firebase.google.com) and create a project (or open an existing one). The free Spark plan is enough.
+2. Click the web icon **</>** to add a web app. You can leave “Also set up Firebase Hosting” unchecked.
+3. Copy the `firebaseConfig` object that appears.
+4. Open `index.html` in this repo and paste the values into the `FIREBASE_CONFIG` object near the top of the `<script>` block (uncomment the lines and fill them in).
+5. In the Firebase console go to **Build → Realtime Database → Create Database**. Choose any location, then **Start in locked mode**.
+6. Open the **Rules** tab and replace the rules with:
+
+```json
+{
+  "rules": {
+    "races": {
+      "$rid": {
+        ".read": true,
+        ".write": true,
+        ".validate": "newData.hasChildren(['meta']) || data.exists()"
+      }
+    }
+  }
+}
+```
+
+Then click **Publish**. (Anyone who knows a race ID can read/write that race. Race IDs are short random strings; delete old races from the console after meets if you prefer.)
+
+7. Under **Project settings → General → Your apps**, open your web app and add your GitHub Pages domain (for example `yourusername.github.io`) to **Authorized domains**.
+8. Commit and push the updated `index.html` (and the two new `firebase-*-compat.js` files). After the site updates, open the app once with signal so the new service-worker cache is stored.
+
+### Using live mode
+
+- On the Organizer setup screen, turn on **Live helper updates (Firebase)**.
+- Start the race as usual. Helpers still scan the invite QR (or paste the code).
+- When a helper takes a split or reorders names, the data is written to Firebase. The organizer’s phone listens and merges the splits automatically (only filling times that are still missing, same as QR import).
+- Status line under the toggle shows **Live · online** or **Live · offline (queued)**.
+- If anyone loses signal, splits stay on their phone and upload the next time the connection returns. QR codes continue to work as a backup at any time.
+
+### Privacy note
+
+Runner names travel through Google’s servers for that race. Prefer first names or initials, use a fresh race for each meet, and delete the race node in the Firebase console afterward if desired.
+
