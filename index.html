@@ -488,7 +488,7 @@ async function redeemUnlockCode(raw){
     if((e&&e.code)==='PERMISSION_DENIED')throw new Error('Database rules block codes — open Rules, add the codes section, Publish');
     throw new Error((e&&e.message)||'Could not read code');
   }
-  if(!pre.exists())throw new Error('Code not found — key under codes/ must match exactly (CULVER-XC)');
+  if(!pre.exists())throw new Error('Code not found — check the spelling and try again');
   const v0=pre.val()||{};
   const max0=Math.max(1,+v0.maxUses||1),used0=Math.max(0,+v0.used||0);
   if(used0>=max0)throw new Error('This code has no redemptions left');
