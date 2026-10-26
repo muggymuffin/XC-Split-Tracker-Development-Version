@@ -31,7 +31,7 @@ The app works without any of this (QR codes only). Do these steps once to let he
 }
 ```
 
-What these rules do: nobody can list or browse the database; you can only read or write a race if you know its random 6-character race code (which only comes from the organizer's invite QR). Helpers can only write inside their own helper slot. There is no sign-in, so anyone who has a race code can see that race's splits, so don't put anything private in runner names.
+What these rules do: nobody can list or browse the database; you can only read or write a race if you know its random 6-character race code (which only comes from the organizer's invite QR). Helpers write their splits into their own helper slot (`h`). The organizer's phone publishes the race clock and everyone's splits into the same area (as `h/_org`) for helpers to read, so these rules cover everything. There is no sign-in, so anyone who has a race code can see that race's splits, so don't put anything private in runner names.
 
 ## 3. Get the config
 1. **Project settings (gear icon) → General → Your apps → Web (`</>`)**, register an app (no hosting needed).
@@ -43,8 +43,9 @@ Commit and push all files to your GitHub Pages repo as usual (including `firebas
 
 ## Using it
 - **Organizer**: nothing new to do. Set up, tap **Invite helpers (QR)**, start the race. The line under the title shows `Live — N helpers sending`.
-- **Helpers**: scan the invite as before. Taps upload automatically. If signal drops, taps stay on the phone and upload by themselves when a connection returns, even if the app was closed and reopened.
+- **Helpers**: scan the invite as before. Taps upload automatically. Once the organizer starts the race, the helper screen shows the running race clock, each tap's race time, the field's current pace, and under each name: how far ahead/behind goal pace they are, estimated arrival at your marker, and their current pace (the clock and estimates keep working if signal drops, using the last race info the phone received). If signal drops, taps stay on the phone and upload by themselves when a connection returns, even if the app was closed and reopened.
 - **Offline mode** (checkbox on the first screen, and on the helper screens): turns all internet use off. Splits are still saved on the phone, and **Send to organizer** / **Import splits** (QR) work exactly as before. Turning offline mode off uploads anything waiting.
+- If the organizer adds, renames or removes a runner, or adds a marker during the race, helpers' lists update by themselves. On the helper timing screen, **Sort waiting by arrival** orders the runners not yet timed by estimated arrival.
 - Late helpers can upload after the race is finished; the organizer's phone still receives them while that race is open.
 
 ## Housekeeping
