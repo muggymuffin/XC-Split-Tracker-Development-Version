@@ -245,10 +245,12 @@ function draw0(){
     <div class="add"><input id="mdist" type="number" step="any" min="0" inputmode="decimal" placeholder="Distance"><select id="munit" class="sm"><option value="mi" ${S.munit!=='km'?'selected':''}>mi</option><option value="km" ${S.munit==='km'?'selected':''}>km</option></select><button class="s" id="addmk">Add</button></div>
     <div class="tabs" style="flex-wrap:wrap">${S.marks.map((k,i)=>`<button class="tab" data-m="${i}">• ${esc(k.label)} ×</button>`).join('')}</div>
     <button class="p" id="go" style="width:100%;margin-top:6px" ${S.order.length<1?'disabled':''}>Continue</button>
+    ${hasHost()&&hasLive()?'':`<div class="card" style="margin-top:14px"><b>Host helpers &amp; Live</b><div class="hint" style="margin:4px 0 8px">${hasHost()?'Helper hosting is on this device.':'Unlock inviting assistants with a QR code (helpers stay free).'} ${hasLive()?'Live sync is on.':'A code can also include Live sync for a limited time.'} ${unlockLeftHint()?esc(unlockLeftHint()):''}</div><button class="s" id="hostups" style="width:100%">${hasHost()?'Redeem a code / Live unlock':'Unlock helper hosting'}</button></div>`}
     <p class="cr"><button class="lnk" id="crd">Credits &amp; licenses</button></p>`;
     const add=()=>{const v=$('#in').value.trim();if(!v)return;S.order.push({id:S.nid++,name:v});render();$('#in').focus()};
     $('#racename').oninput=e=>{S.raceName=e.target.value;saveState()};
     $('#addb').onclick=add;$('#in').onkeydown=e=>{if(e.key==='Enter')add()};$('#crd').onclick=()=>{S.modal={type:'credits'};render()};bindSync();$('#hst').onclick=()=>{S.modal={type:'hist'};render()};$('#tms').onclick=()=>{S.modal={type:'teams'};render()};bindSeg();
+    if($('#hostups'))$('#hostups').onclick=()=>showHostPaywall('setup');
     a.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{S.order=S.order.filter(p=>p.id!=b.dataset.x);render()});
     a.querySelectorAll('[data-gi]').forEach(i=>{
       const id=i.dataset.gi;
@@ -286,6 +288,10 @@ function draw0(){
     <button class="s" id="back" style="width:100%">← Back to edit</button>
     <div class="bar" style="margin-top:12px"><button class="s" id="shr">Share QR</button><button class="s" id="scn">Scan QR</button></div>`;
     $('#start').onclick=startRace;$('#back').onclick=()=>{S.phase='dist';render()};bindSync();
+    // First visit to Ready: soft, dismissible prompt about hosting helpers
+    if(!hasHost()&&!hostReadySeen()&&!(S.modal&&S.modal.type==='host')){
+      setTimeout(()=>{if(S.phase==='ready'&&!hasHost()&&!hostReadySeen())showHostPaywall('ready')},300);
+    }
     return;
   }
   const run=S.phase==='race',m=M(),n=m.actual.length,full=m.laps.length>=n;
@@ -347,7 +353,7 @@ function renderModal(){
   const el=$('#modal'),md=S.modal;
   stopCam();if(!md){el.innerHTML='';return}
   const m=M();
-  if(md.type==='credits')return creditsModal(el);if(md.type==='resume')return resumeModal(el);if(md.type==='teams')return teamsModal(el);if(md.type==='invite')return inviteModal(el);if(md.type==='hres')return hresModal(el);if(md.type==='hist')return histModal(el);if(md.type==='share')return shareModal(el);if(md.type==='scan')return scanModal(el);if(md.type==='time'){
+  if(md.type==='credits')return creditsModal(el);if(md.type==='resume')return resumeModal(el);if(md.type==='teams')return teamsModal(el);if(md.type==='host')return hostPaywallModal(el);if(md.type==='invite')return inviteModal(el);if(md.type==='hres')return hresModal(el);if(md.type==='hist')return histModal(el);if(md.type==='share')return shareModal(el);if(md.type==='scan')return scanModal(el);if(md.type==='time'){
     el.innerHTML=`<div class="ov"><div class="mdl"><h2>Edit time</h2>
     <p class="hint">${ord(md.i)} runner · ${esc(byId(m.actual[md.i]).name)}</p>
     <input id="tt" value="${esc(md.t)}" inputmode="text" autocomplete="off" autocapitalize="off">
@@ -384,9 +390,124 @@ function bindSync(){
   if(s){
     s.textContent='Export splits';s.onclick=()=>{S.modal={type:'share'};render()};
     if(S.phase!=='done'&&!$('#inv'))s.parentNode.insertAdjacentHTML('afterend','<div class="bar"><button class="s" id="inv">Invite helpers (QR)</button></div>');
-    if($('#inv'))$('#inv').onclick=()=>{S.modal={type:'invite'};render()};
+    if($('#inv'))$('#inv').onclick=()=>openInvite();
   }
-  if(c){c.textContent='Import splits';c.onclick=()=>{S.modal={type:'scan'};render()}}
+  if(c){c.textContent='Import splits';c.onclick=()=>{if(!hasHost()){showHostPaywall('import');return}S.modal={type:'scan'};render()}}
+}
+// --- Host / Live unlock (IAP later; day codes via Firebase) ---
+// Permanent flags (future App Store) or timed unlocks from redeemable codes.
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const hasHost=()=>{if(lsGet('rst-host-v1')==='1')return true;const u=+lsGet('rst-host-until')||0;return u>Date.now()};
+const hasLive=()=>{if(lsGet('rst-live-v1')==='1')return true;const u=+lsGet('rst-live-until')||0;return u>Date.now()};
+const setHost=v=>lsSet('rst-host-v1',v?'1':'0');
+const setLive=v=>lsSet('rst-live-v1',v?'1':'0');
+const setHostUntil=ts=>lsSet('rst-host-until',String(ts||0));
+const setLiveUntil=ts=>lsSet('rst-live-until',String(ts||0));
+const hostReadySeen=()=>lsGet('rst-host-ready-seen')==='1';
+const setHostReadySeen=()=>lsSet('rst-host-ready-seen','1');
+function unlockLeftHint(){
+  const parts=[];
+  const hu=+lsGet('rst-host-until')||0,lu=+lsGet('rst-live-until')||0;
+  if(lsGet('rst-host-v1')==='1')parts.push('Helpers: unlocked');
+  else if(hu>Date.now())parts.push('Helpers until '+new Date(hu).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}));
+  if(lsGet('rst-live-v1')==='1')parts.push('Live: unlocked');
+  else if(lu>Date.now())parts.push('Live until '+new Date(lu).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}));
+  return parts.join(' · ');
+}
+function openInvite(){
+  if(!hasHost()){showHostPaywall('invite');return}
+  S.modal={type:'invite'};render();
+}
+function showHostPaywall(reason){
+  S.modal={type:'host',reason:reason||'invite'};render();
+}
+function hostPaywallModal(el){
+  const why=S.modal&&S.modal.reason;
+  const lead=why==='import'
+    ?'Importing helper splits needs <b>Helper hosting</b> on this organizer phone.'
+    :why==='live'
+    ?'Turning off Offline mode uses <b>Live sync</b>. Unlock it with a purchase or a code that includes Live.'
+    :why==='ready'
+    ?'Timing with assistants? Unlock <b>Helper hosting</b> to invite helpers with a QR code. Helpers never pay.'
+    :'Inviting helpers needs <b>Helper hosting</b> on this organizer phone.';
+  const left=unlockLeftHint();
+  el.innerHTML=`<div class="ov"><div class="mdl"><h2>${why==='live'?'Live sync':'Host helpers'}</h2>
+  <p class="hint">${lead}</p>
+  <div class="card"><b>Helper hosting</b><div class="hint" style="margin:4px 0 0">Invite helpers (QR) · Import helper results. The Helper tab stays free for everyone.</div></div>
+  <div class="card"><b>Live sync</b><div class="hint" style="margin:4px 0 0">Optional. Codes can include Live or not — you choose when you create each code.</div></div>
+  ${left?`<p class="hint">${esc(left)}</p>`:''}
+  <label for="ulcode">Unlock code</label>
+  <input id="ulcode" placeholder="e.g. MEET-SAT-01" autocomplete="off" autocapitalize="characters" spellcheck="false">
+  <p class="hint" id="ulmsg" style="margin-top:6px"></p>
+  <button class="p" id="ulgo" style="width:100%">Redeem code</button>
+  <p class="hint" style="margin-top:12px">App Store purchases will replace the test unlock below.</p>
+  <div class="bar"><button class="s" id="hp-no">Not now</button><button class="s" id="hp-yes">Test unlock (device)</button></div>
+  </div></div>`;
+  const msg=$('#ulmsg');
+  $('#hp-no').onclick=()=>{if(why==='ready')setHostReadySeen();S.modal=null;render()};
+  $('#hp-yes').onclick=()=>{
+    setHost(true);setHostReadySeen();
+    if(why==='live')setLive(true);
+    S.modal=null;render();
+    setFlash(why==='live'?'Live + helpers unlocked on this device':'Helper hosting unlocked on this device');
+  };
+  $('#ulgo').onclick=async()=>{
+    const btn=$('#ulgo'),inp=$('#ulcode');
+    btn.disabled=true;msg.textContent='Checking…';msg.style.color='';
+    try{
+      const r=await redeemUnlockCode(inp.value);
+      setHostReadySeen();
+      const bits=[r.host?'helpers':null,r.live?'live':null].filter(Boolean).join(' + ');
+      msg.textContent='Unlocked '+bits+' for '+r.hours+' hour'+(r.hours===1?'':'s')+' · '+(r.left)+' use'+(r.left===1?'':'s')+' left on this code';
+      setFlash('Code redeemed — '+bits+' for '+r.hours+'h');
+      setTimeout(()=>{S.modal=null;render()},700);
+    }catch(e){
+      msg.textContent=e.message||'Could not redeem';
+      msg.style.color='var(--bad)';
+      btn.disabled=false;
+    }
+  };
+}
+// Redeem a code from Firebase: codes/{CODE} with maxUses, used, host, live, hours
+async function redeemUnlockCode(raw){
+  const code=String(raw||'').trim().toUpperCase().replace(/\s+/g,'');
+  if(!code)throw new Error('Enter a code');
+  if(!/^[A-Z0-9][A-Z0-9_-]{2,31}$/.test(code))throw new Error('That doesn’t look like a valid code');
+  if(!fbOK())throw new Error('Live/database isn’t set up in this copy of the app');
+  if(!(await ensureFB())||!FB.db)throw new Error('No connection — try again online');
+  if(!FB.conn)throw new Error('No connection — try again online');
+  const ref=FB.db.ref('codes/'+code);
+  const tx=await ref.transaction(cur=>{
+    if(cur==null)return;
+    const max=Math.max(1,+cur.maxUses||1),used=Math.max(0,+cur.used||0);
+    if(used>=max)return;
+    // Keep all fields; only bump used
+    const next={};Object.keys(cur).forEach(k=>{next[k]=cur[k]});
+    next.used=used+1;
+    next.maxUses=max;
+    if(next.host==null)next.host=true;
+    if(next.live==null)next.live=false;
+    if(next.hours==null)next.hours=24;
+    return next;
+  });
+  if(!tx.committed){
+    const snap=await ref.once('value');
+    if(!snap.exists())throw new Error('Code not found');
+    const v=snap.val()||{};
+    if((+v.used||0)>=Math.max(1,+v.maxUses||1))throw new Error('This code has no redemptions left');
+    throw new Error('Could not redeem — try again');
+  }
+  const d=tx.snapshot.val()||{};
+  const hours=Math.max(1,Math.min(24*30,+d.hours||24));
+  const until=Date.now()+hours*3600*1000;
+  const host=d.host!==false&&d.host!==0&&d.host!=='0';
+  const live=!!d.live&&d.live!=='0';
+  if(host)setHostUntil(until);
+  if(live)setLiveUntil(until);
+  if(!host&&!live)throw new Error('This code doesn’t unlock any features');
+  const left=Math.max(0,(+d.maxUses||1)-(+d.used||0));
+  return{hours,host,live,left};
 }
 function flashUI(){let f=$('#flash');if(!f){f=document.createElement('div');f.id='flash';f.className='flash';document.body.appendChild(f)}f.textContent=S.flash;f.style.display=S.flash?'block':'none'}
 function setFlash(msg){S.flash=msg;flashUI();clearTimeout(setFlash.t);setFlash.t=setTimeout(()=>{S.flash='';flashUI()},3500)}
@@ -855,6 +976,7 @@ function inviteModal(el){liveModal(el,'Invite helpers','Helpers open the app, ch
 function hresModal(el){liveModal(el,'Send to organizer','On the organizer’s phone choose <b>Import splits</b> and scan this QR. It changes every second to match clocks, so keep the screen steady until it’s read. You can send again after more splits.',resCode)}
 function hlap(){
   const k=S.hm[S.hc];if(!k||k.taps.length>=k.actual.length)return;
+  if(HO.closed||(HO.m&&HO.m.ph==='done'))return;
   // Live mode: don't record splits before the organizer starts the race
   if(liveOn()&&!(HO.m&&HO.m.ph==='race'))return;
   k.taps.push(Date.now());render();
@@ -888,30 +1010,34 @@ function drawHelper(){
     return;
   }
   const k=S.hm[S.hc],n=k.actual.length,full=k.taps.length>=n,nameOf=id=>{const x=inv.o.find(r=>r[0]==id);return x?x[1]:'?'};
-  // In live mode, disable Take split until the organizer has started the race
-  const waitRace=liveOn()&&!(HO.m&&HO.m.ph==='race');
-  const takeOff=full||waitRace;
-  const takeLabel=full?'All splits taken here':waitRace?'Waiting for race to start':'Take split · '+ord(k.taps.length)+' runner';
-  a.innerHTML=`<h1>Timing as helper</h1>
+  // Live mode: wait for start, or freeze when race is finished / cloud data cleared
+  const ended=!!(HO.closed||(HO.m&&HO.m.ph==='done'));
+  const waitRace=liveOn()&&!ended&&!(HO.m&&HO.m.ph==='race');
+  const takeOff=full||waitRace||ended;
+  const takeLabel=ended?'Race finished':full?'All splits taken here':waitRace?'Waiting for race to start':'Take split · '+ord(k.taps.length)+' runner';
+  a.innerHTML=`<h1>${ended?'Race finished':'Timing as helper'}</h1>
   <div class="clock" id="hclk" style="display:none"></div><p class="hint" id="hfp" style="text-align:center;margin-top:-6px"></p>
+  ${ended?'<div class="card"><b>Race ended</b><div class="hint" style="margin:4px 0 0">Live timing is closed. You can still review the last results on this phone. Live data may already have been cleared from the server.</div></div>':''}
   <button class="p lap" id="hlap" ${takeOff?'disabled':''}>${takeLabel}</button>
-  <div class="bar"><button class="s" id="hundo" ${k.taps.length?'':'disabled'}>Undo last</button><button class="s" id="hsort" ${full||waitRace?'disabled':''}>Sort waiting by arrival</button></div>
+  <div class="bar"><button class="s" id="hundo" ${k.taps.length&&!ended?'':'disabled'}>Undo last</button><button class="s" id="hsort" ${full||waitRace||ended?'disabled':''}>Sort waiting by arrival</button></div>
   ${tabsHTML(S.hm.map((m,i)=>`<button class="tab ${i===S.hc?'on':''}" data-t="${i}">${esc(m.label)} · ${m.taps.length}/${m.actual.length}</button>`).join(''))}
-  <p class="hint">Press and drag ⇅ to put names in the order they passed. Splits from the organizer or other helpers fill in automatically.</p>
+  <p class="hint">${ended?'Reviewing final results from this session.':'Press and drag ⇅ to put names in the order they passed. Splits from the organizer or other helpers fill in automatically.'}</p>
   <div class="grid"><div class="slots">${k.actual.map((_,i)=>`<div class="slot"><b>${ord(i)}</b>${hSlot(k,i)}</div>`).join('')}</div>
   <div class="list" id="act">${k.actual.map((id,i)=>{
     return `<div class="row" data-id="${id}"><span class="h">⇅</span><span class="nm">${esc(nameOf(id))}<small><span class="gd"></span><span class="hi"></span></small></span></div>`;
   }).join('')}</div></div>
-  <button class="p" id="hsend" style="width:100%;margin-top:12px">Send to organizer</button>
+  ${ended?'':'<button class="p" id="hsend" style="width:100%;margin-top:12px">Send to organizer</button>'}
   <div style="margin-top:12px">${offToggle(false)}</div>
-  <div class="bar" style="margin-top:12px"><button class="s" id="hchg">Change markers</button><button class="s" id="hend">End session</button></div>`;
-  sortable($('#act'),ids=>{
-    const r=reorderWithTimes(ids,k.actual,k.taps);
-    k.actual=r.actual;k.taps=r.times;render();
-  });
-  $('#hlap').onclick=hlap;$('#hsort').onclick=hSort;
-  $('#hundo').onclick=()=>{k.taps.pop();render()};
-  $('#hsend').onclick=()=>{S.modal={type:'hres'};render()};
+  <div class="bar" style="margin-top:12px"><button class="s" id="hchg" ${ended?'disabled':''}>Change markers</button><button class="s" id="hend">End session</button></div>`;
+  if(!ended){
+    sortable($('#act'),ids=>{
+      const r=reorderWithTimes(ids,k.actual,k.taps);
+      k.actual=r.actual;k.taps=r.times;render();
+    });
+    $('#hlap').onclick=hlap;$('#hsort').onclick=hSort;
+    $('#hundo').onclick=()=>{k.taps.pop();render()};
+    if($('#hsend'))$('#hsend').onclick=()=>{S.modal={type:'hres'};render()};
+  }
   a.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{S.hc=+b.dataset.t;render()});
   $('#hchg').onclick=()=>{S.phase='hsetup';render()};
   $('#hend').onclick=e=>{const b=e.target;if(!b.dataset.sure){b.dataset.sure='1';b.textContent=S.lv.dirty?'Not uploaded yet — tap again to discard':'Tap again — discards times';return}S.hinv=null;S.lv=newLv();S.hm=[];S.hsel=[];S.hc=0;S.phase='hhome';render()};
@@ -928,7 +1054,7 @@ const FBV='10.14.1'; // keep in step with sw.js
 const FB={db:null,conn:false,so:null,load:null,gone:0,push:0,org:null,ref:null,cb:null,last:0};
 const LV={remote:{},pend:false,t:0,err:'',osent:'',srid:'',ot:0};
 // Helper-side mirror of what the organizer publishes (race clock, goals, everyone's splits) at races/<id>/h/_org (inside the helper area, so the original database rules already allow it)
-const HO={m:null,off:null,ref:null,cb:null,rid:null,lr:0,sp:false};
+const HO={m:null,off:null,ref:null,cb:null,rid:null,lr:0,sp:false,closed:false};
 const isH=()=>S.phase[0]==='h';
 const fbOK=()=>{const c=window.FB_CONFIG;return !!(c&&c.databaseURL&&c.apiKey&&!/PASTE|YOUR/i.test(c.databaseURL+c.apiKey))};
 const liveOn=()=>fbOK()&&!S.offline;
@@ -940,6 +1066,12 @@ function liveErr(e){
   updLive();
 }
 function setOffline(v){
+  // Organizer turning Live on requires Live unlock (helpers can always connect)
+  if(!v&&!isH()&&!hasLive()){
+    showHostPaywall('live');
+    const c=$('#offm');if(c)c.checked=true;
+    return;
+  }
   S.offline=!!v;
   try{localStorage.setItem('rst-offline-v1',v?'1':'0')}catch(e){}
   render();
@@ -1023,14 +1155,14 @@ async function liveStep(){
   if(!(await ensureFB())){updLive();return}
   if(S.offline){if(!FB.gone){FB.db.goOffline();FB.gone=1;FB.conn=false}updLive();return}
   if(FB.gone){FB.db.goOnline();FB.gone=0}
-  if(isH()){orgDetach();liveFlush();hAttach()}else{hDetach();orgAttach();orgPublish()}
+  if(isH()){orgDetach();liveFlush();hAttach()}else{hDetach();if(hasLive()){orgAttach();orgPublish()}else orgDetach()}
   updLive();
 }
 // Called from render(): notices helper changes (new tap, undo, reorder) and marks them as not yet uploaded.
 function liveTick(){
   const L=S.lv;
   if(isH()){
-    if(S.hinv&&(!HO.m||HO.rid!==S.hinv.r)){HO.rid=S.hinv.r;HO.m=null;HO.off=null;if(S.lv.o&&S.lv.o.r===HO.rid){try{HO.m=JSON.parse(S.lv.o.d);HO.off=S.lv.o.off}catch(e){}}}
+    if(S.hinv&&(!HO.m||HO.rid!==S.hinv.r)){HO.rid=S.hinv.r;HO.m=null;HO.off=null;HO.closed=false;if(S.lv.o&&S.lv.o.r===HO.rid){try{HO.m=JSON.parse(S.lv.o.d);HO.off=S.lv.o.off;HO.closed=!!S.lv.o.closed||(HO.m&&HO.m.ph==='done')}catch(e){}}}
     if(S.hinv&&S.hm){
       const core=hCore(),sig=JSON.stringify(core);
       if(sig!==L.sig){const first=!L.sig&&!Object.keys(core.m).length;L.sig=sig;if(!first){L.ver++;L.dirty=1}}
@@ -1074,6 +1206,8 @@ function oCore(){
 }
 // Sent as one JSON string so Firebase never reshapes the arrays; debounced, and re-sent after a reconnect.
 function orgPublish(force){
+  if(S.liveCleared)return;
+  if(!hasLive())return;
   if(!(S.phase==='race'||S.phase==='done')||!S.rid||!FB.db||S.offline)return;
   const d=JSON.stringify(oCore());
   if(!force&&d===LV.osent&&LV.srid===S.rid)return;
@@ -1098,12 +1232,46 @@ function hAttach(){
   HO.ref=FB.db.ref('races/'+rid+'/h/_org');
   HO.cb=s=>{
     const v=s.val();LV.err='';
-    if(v&&v.d){try{HO.m=JSON.parse(v.d);HO.rid=rid;HO.off=v.off==null?null:+v.off;S.lv.o={r:rid,d:v.d,off:HO.off};HO.sp=true;saveState()}catch(e){}}
+    if(v&&v.d){
+      try{
+        HO.m=JSON.parse(v.d);HO.rid=rid;HO.off=v.off==null?null:+v.off;
+        HO.closed=HO.m.ph==='done';
+        S.lv.o={r:rid,d:v.d,off:HO.off,closed:HO.closed};HO.sp=true;saveState();
+      }catch(e){}
+    }else if(HO.m){
+      // Organizer cleared the race from Firebase — freeze on the last snapshot we have
+      HO.closed=true;
+      if(HO.m.ph!=='done')HO.m=Object.assign({},HO.m,{ph:'done'});
+      if(S.lv.o)S.lv.o.closed=true;
+      saveState();
+    }
     updLive();hUpdate(true);
   };
   HO.ref.on('value',HO.cb,liveErr);
 }
 function hDetach(){if(HO.ref){try{HO.ref.off('value',HO.cb)}catch(e){}}HO.ref=null;HO.lrid=null}
+// After finish: one last merge of helper data, then delete the race node so the free tier stays clean.
+async function orgCleanupRace(){
+  if(!S.rid||!FB.db||S.liveCleared)return;
+  LV.pend=true;try{pump()}catch(e){}
+  orgPublish(true);
+  await new Promise(r=>setTimeout(r,1000));
+  const rid=S.rid;
+  try{
+    await FB.db.ref('races/'+rid).remove();
+  }catch(e){
+    // Fallback if rules only allow writes under h/*
+    try{
+      const snap=await FB.db.ref('races/'+rid+'/h').once('value');
+      const u={};snap.forEach(c=>{u[c.key]=null});
+      if(Object.keys(u).length)await FB.db.ref('races/'+rid+'/h').update(u);
+    }catch(e2){liveErr(e2);setFlash('Race saved on this phone — could not clear live data');return}
+  }
+  S.liveCleared=true;orgDetach();LV.osent='';LV.srid='';
+  saveState();
+  setFlash('Race saved on this phone · live data cleared');
+  updLive();
+}
 // helper phone's clock -> organizer's clock
 const hShift=()=>shiftCombine(S.hinv&&S.hinv.A!=null?+S.hinv.A:null,(HO.off!=null&&FB.so!=null)?(FB.so-HO.off):null);
 const hElapsedAt=t=>HO.m?Math.max(0,t+hShift()-HO.m.ep):null;
@@ -1417,7 +1585,7 @@ function startRace(){
   S.pred=S.order.map(p=>String(p.id));
   S.markers=mks().map((k,i)=>{const useTot=!S.marks.length&&k.dist===''&&+S.total>0;const m={label:k.label,dist:useTot?S.total:k.dist,unit:useTot?S.unit:(k.unit||S.unit),actual:S.order.map(p=>p.id),laps:[]};relabel(m,i);return m});S.cur=0;
   S.final=0;S.rid=S.invRid||Math.random().toString(36).slice(2,8);S.invRid='';S.epoch=Date.now();S.phase='race';S.start=performance.now();
-  LV.osent='';LV.srid=''; // force a fresh publish for the new race
+  LV.osent='';LV.srid='';S.liveCleared=false; // force a fresh publish for the new race
   render();tick();
   // Ensure the organizer payload is written even if the first liveStep raced the connection
   setTimeout(()=>orgPublish(true),500);
@@ -1436,7 +1604,12 @@ function lap(){
 }
 function finish(){
   if(S.phase!=='race')return;
-  S.final=performance.now()-S.start;S.phase='done';cancelAnimationFrame(S.raf);render();orgPublish(true);
+  S.final=performance.now()-S.start;S.phase='done';cancelAnimationFrame(S.raf);render();
+  orgPublish(true);
+  if(liveOn()&&fbOK()){
+    setFlash('Race finished — collecting last helper splits…');
+    setTimeout(()=>orgCleanupRace(),4500);
+  }else saveState();
 }
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&!S.modal&&!['INPUT','SELECT','BUTTON'].includes(e.target.tagName)){if(S.phase==='race'){e.preventDefault();lap()}else if(S.phase==='htime'){e.preventDefault();hlap()}}});
 // Rapid taps on Take split must never zoom the page: no double-tap zoom (touch-action above) and no pinch zoom.

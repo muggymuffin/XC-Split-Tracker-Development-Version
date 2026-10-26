@@ -19,19 +19,54 @@ The app works without any of this (QR codes only). Do these steps once to let he
     "races": {
       "$rid": {
         ".read": "$rid.length <= 12",
+        ".write": "$rid.length <= 12",
         "h": {
+          ".read": "$rid.length <= 12",
           "$hid": {
             ".write": "$rid.length <= 12 && $hid.length <= 16",
-            ".validate": "newData.hasChildren()"
+            ".validate": "newData.hasChildren() || !newData.exists()"
           }
         }
+      }
+    },
+    "codes": {
+      "$code": {
+        ".read": true,
+        ".write": true,
+        ".validate": "newData.hasChildren(['maxUses', 'used']) && newData.child('maxUses').isNumber() && newData.child('used').isNumber() && newData.child('used').val() >= 0 && newData.child('used').val() <= newData.child('maxUses').val()"
       }
     }
   }
 }
 ```
 
-What these rules do: nobody can list or browse the database; you can only read or write a race if you know its random 6-character race code (which only comes from the organizer's invite QR). Helpers write their splits into their own helper slot (`h`). The organizer's phone publishes the race clock and everyone's splits into the same area (as `h/_org`) for helpers to read, so these rules cover everything. There is no sign-in, so anyone who has a race code can see that race's splits, so don't put anything private in runner names.
+What these rules do: nobody can list races; you can only read or write a race if you know its random race code. Helpers write under `h`. The organizer can delete a race when finished. **Unlock codes** live under `codes/{CODE}` (readable so devices can redeem; each redeem bumps `used`).
+
+### Unlock codes (you create these)
+
+In **Realtime Database → Data**, add a child under `codes` (name = the code users type, **UPPERCASE**, e.g. `MEET-SAT-01`):
+
+| Field | Example | Meaning |
+|--------|---------|--------|
+| `maxUses` | `5` | How many phones may redeem this code |
+| `used` | `0` | Start at 0; the app increments on each redeem |
+| `host` | `true` | Unlocks Invite helpers / Import for a limited time |
+| `live` | `true` or `false` | Whether this code also unlocks Live sync |
+| `hours` | `24` | How long the unlock lasts on that phone |
+
+Example: one Saturday code for 12 coaches, helpers + live, 24 hours:
+
+```
+codes/
+  MEET-SAT-01/
+    maxUses: 12
+    used: 0
+    host: true
+    live: true
+    hours: 24
+```
+
+Host-only (no live): set `live: false`. When `used` reaches `maxUses`, further redeems fail.
 
 ## 3. Get the config
 1. **Project settings (gear icon) → General → Your apps → Web (`</>`)**, register an app (no hosting needed).
