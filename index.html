@@ -1123,9 +1123,8 @@ function hUpdate(force){
   if(f){
     if(!HO.m)f.textContent=(!fbOK()||S.offline)?'No stopwatch in offline mode — times are matched when you Send to organizer.':LV.err?'Can’t get race info ('+LV.err+') — check the database rules.':S.hinv.lv===0?'The organizer is in offline mode, so there’s no live stopwatch.':FB.conn?'Waiting for race info from the organizer’s phone — it arrives once the organizer starts the race.':'No connection — the stopwatch starts when you’re back online.';
     else f.textContent=withOrg(()=>{
-      const ps=S.order.map(p=>recentPace(p.id)).filter(Boolean).map(i=>i.pace),u=S.unit;
-      const fp=ps.length?'Field pace '+fmtE(ps.reduce((x,y)=>x+y,0)/ps.length*KMF(u))+'/'+u:'';
-      return[S.phase==='done'?'Race finished':'',fp,+S.total>0?S.total+' '+u+' total':''].filter(Boolean).join(' · ');
+      const u=S.unit;
+      return[S.phase==='done'?'Race finished':'',+S.total>0?S.total+' '+u+' total':''].filter(Boolean).join(' · ');
     })||'';
   }
   if(HO.m)hRows(ms);
@@ -1235,12 +1234,9 @@ function hRows(ms){
         st=gs?gs.st:null;
         if(have!=null)parts.push('✓ '+fmtE(have));
         else if(run){
-          // Match organizer estLine: Arr / Fin estimates
+          // Arrival / finish estimates only (no "Due now")
           const es=hEst(id,m,cd,gp);
-          if(es){
-            if(es.t<=ms)parts.push('Due now');
-            else parts.push('Arr '+es.sy+fmtE(es.t));
-          }
+          if(es)parts.push('Arr '+es.sy+fmtE(es.t));
           if(D>0&&gp!=null){
             const r2=recentPace(id);let pc,b,sy;
             if(r2){pc=r2.pace;b={d:r2.d,t:r2.t};sy='~'}else{pc=gp;b={d:0,t:0};sy='≈'}
@@ -1248,7 +1244,8 @@ function hRows(ms){
           }
         }
       }
-      if(r)parts.push(fmtE(r.pace*KMF(u))+'/'+u);
+      // Pace only for runners not yet timed at this marker
+      if(i>=k.taps.length&&r)parts.push(fmtE(r.pace*KMF(u))+'/'+u);
       const gdEl=row.querySelector('.gd'),hiEl=row.querySelector('.hi');
       if(gdEl)gdEl.textContent=gd;
       if(hiEl)hiEl.textContent=(gd&&parts.length?' ':'')+parts.join(' · ');
