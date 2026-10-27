@@ -94,7 +94,7 @@ summary{cursor:pointer;margin:8px 0}
 <script src="jsQR.js"></script>
 <script>
 const $=s=>document.querySelector(s);
-function newLv(){return{hid:'',dirty:0,ver:0,sig:'',src:{},orid:'',o:null}}
+function newLv(){return{hid:'',dirty:0,ver:0,sig:'',src:{},hts:{},orid:'',o:null}}
 function loadOff(){try{return localStorage.getItem('rst-offline-v1')==='1'}catch(e){return false}}
 let S={phase:'setup',raceName:'',order:[],pred:[],marks:[],def:{label:'Marker 1',dist:''},total:'',unit:'mi',markers:[],cur:0,start:0,final:0,raf:0,nid:1,rid:'',epoch:0,flash:'',invRid:'',munit:'mi',tdraft:'',hinv:null,hsel:[],hm:[],hc:0,modal:null,draft:null,goals:{},lv:newLv(),offline:loadOff()};
 const M=()=>S.markers[S.cur];
@@ -233,7 +233,7 @@ function draw0(){
   const a=$('#app');
   if(S.phase==='setup'){
     a.innerHTML=`<h1>Race Split Taker</h1>
-    ${modeSeg('org')}${offToggle()}
+    ${modeSeg('org')}${offToggle()}${unlockTimeHTML()}
     <label for="racename">Race name</label><input id="racename" value="${esc(S.raceName||'')}" placeholder="e.g. County Championships" autocomplete="off">
     <div class="bar"><button class="s" id="scn">Import splits</button><button class="s" id="hst">Saved races</button></div>
     <div class="bar"><button class="s" id="tms">Team presets</button></div>
@@ -415,6 +415,22 @@ function unlockLeftHint(){
   else if(lu>Date.now())parts.push('Live until '+new Date(lu).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}));
   return parts.join(' · ');
 }
+// Time left on a code-based unlock (permanent/test unlocks have no clock, so they show nothing).
+function fmtLeft(ms){const m=Math.max(0,Math.floor(ms/60000)),d=Math.floor(m/1440),h=Math.floor((m%1440)/60),mm=m%60;return d?`${d}d ${h}h`:h?`${h}h ${mm}m`:(m<1?'<1m':`${mm}m`)}
+function unlockTime(){
+  const now=Date.now();
+  const f=(name,flag,key)=>{if(lsGet(flag)==='1')return null;const u=+lsGet(key)||0;return u?{name,left:u-now}:null};
+  const H=f('Helpers','rst-host-v1','rst-host-until'),L=f('Live','rst-live-v1','rst-live-until');
+  const parts=[H,L].filter(Boolean);
+  if(!parts.length)return{t:'',low:false};
+  const txt=x=>x.left>0?fmtLeft(x.left)+' left':'expired';
+  let t;
+  if(H&&L&&(H.left>0)===(L.left>0)&&Math.abs(H.left-L.left)<60000)t='Helpers & Live: '+txt(H);
+  else t=parts.map(x=>x.name+': '+txt(x)).join(' · ');
+  return{t:'⏱ '+t+(parts.some(x=>x.left<=0)?' — redeem a new code to turn it back on':''),low:parts.some(x=>x.left<3600000)};
+}
+function unlockTimeHTML(){const u=unlockTime();return u.t?`<p class="hint" id="ult"${u.low?' style="color:var(--bad)"':''}>${esc(u.t)}</p>`:''}
+setInterval(()=>{const e=$('#ult');if(!e)return;const u=unlockTime();e.textContent=u.t;e.style.color=u.low?'var(--bad)':''},20000);
 function openInvite(){
   if(!hasHost()){showHostPaywall('invite');return}
   S.modal={type:'invite'};render();
@@ -1128,17 +1144,21 @@ function updLive(){const t=liveStatus().t,a=$('#lvs'),b=$('#lvb');if(a)a.textCon
 const nTaps=()=>S.hm.reduce((a,k)=>a+k.taps.length,0);
 function liveStatus(){
   const h=isH(),run=S.phase==='race'||S.phase==='done';
+  if(S.offline||!(h?S.hinv:run)){LV.nc=0;LV.ncs=0}
   if(!fbOK())return{t:'Live sync isn’t set up in this copy of the app — use QR codes.'};
   if(S.offline){
     if(h)return{t:nTaps()&&S.lv.dirty?'Offline mode — splits stay on this phone. Turn offline mode off to upload them, or use Send to organizer (QR).':'Offline mode — use Send to organizer (QR).'};
     return{t:'Offline mode — import helper results with QR codes.'};
   }
   if(LV.err)return{t:'Live sync blocked ('+LV.err+') — check the database rules.'};
+  if(!h&&!hasLive())return{t:'Live is LOCKED on this phone, so nothing is published to helpers. Redeem a code that includes Live (host-only codes don’t turn it on).'};
   if(!h&&!run)return{t:'Live sync on — helper splits arrive automatically once the race starts. QR still works too.'};
   if(h&&!S.hinv)return{t:'Live sync on — scan the organizer’s invite and your splits upload automatically.'};
   if(!FB.db||!FB.conn){
+    if(!LV.nc)LV.nc=Date.now();
+    const slow=Date.now()-LV.nc>10000,n=nTaps();
+    if(slow)return{t:'Can’t reach live sync — turn off any VPN or ad blocker, or try cellular.'+(h?(n?` ${n} split${n===1?'':'s'} saved on this phone and will upload when connected.`:' Splits are saved on this phone.'):' Helper splits will appear once connected.')};
     if(!h)return{t:'No connection — helper splits will appear when you’re back online.'};
-    const n=nTaps();
     return{t:n?`No connection — ${n} split${n===1?'':'s'} saved on this phone, uploading automatically when you’re back online.`:'No connection — splits are saved on this phone and upload automatically when you’re back online.'};
   }
   if(h)return{t:S.lv.dirty?'Live — uploading…':'Live — all splits uploaded ✓'};
@@ -1169,7 +1189,7 @@ function ensureFB(){
       if(!firebase.database)await ld(base+'firebase-database-compat.js');
       if(!firebase.apps.length)firebase.initializeApp(window.FB_CONFIG);
       FB.db=firebase.database();
-      FB.db.ref('.info/connected').on('value',s=>{FB.conn=!!s.val();if(FB.conn){LV.err='';updLive();liveStep()}});
+      FB.db.ref('.info/connected').on('value',s=>{FB.conn=!!s.val();if(FB.conn){LV.nc=0;LV.ncs=0;LV.err='';updLive();liveStep()}});
       FB.db.ref('.info/serverTimeOffset').on('value',s=>{FB.so=s.val()});
       // Wait up to ~4s for the first connected=true so the first publish isn't skipped
       await new Promise(ok=>{
@@ -1204,7 +1224,7 @@ function liveTick(){
       const core=hCore(),sig=JSON.stringify(core);
       if(sig!==L.sig){const first=!L.sig&&!Object.keys(core.m).length;L.sig=sig;if(!first){L.ver++;L.dirty=1}}
     }
-  }else if(L.orid!==S.rid){L.orid=S.rid;L.src={}}
+  }else if(L.orid!==S.rid){L.orid=S.rid;L.src={};L.hts={}}
   liveStep();
 }
 
@@ -1536,13 +1556,17 @@ function orgMerge(remote){
       const a=Array.from(e.a||[]),t=Array.from(e.t||[]),D=shiftOf(h);
       a.forEach((id,j)=>{if(t[j]!=null&&byId(id))pairs.push([+id,Math.max(0,Math.round(t[j]+D-S.epoch))])});
     }
-    applyHelper(L,pairs,key);
+    applyHelper(L,pairs,key,h&&h.ts!=null?h.ts:null);
   });
 }
 // Times a helper supplied earlier are swapped for their latest version (so a helper fixing the order or undoing a tap
 // carries through), but a time the organizer entered or edited themselves is never overwritten.
 // Helper order of timed runners is respected so rearranging after splits updates the organizer.
-function applyHelper(L,pairs,key){
+function applyHelper(L,pairs,key,ts){
+  // Each helper upload carries a server timestamp. If it is the same upload we already merged, the helper has sent
+  // nothing new, so its copy is older than anything the organizer has done since (like reordering) and must not overwrite it.
+  if(!S.lv.hts)S.lv.hts={};
+  if(ts!=null){if(S.lv.hts[key]===ts)return;S.lv.hts[key]=ts}
   const prev=S.lv.src[key]||{},have=new Map(),orig=new Map();
   L.actual.forEach((id,i)=>{if(L.laps[i]!=null){have.set(+id,L.laps[i]);orig.set(+id,L.laps[i])}});
   Object.keys(prev).forEach(k=>{const id=+k;if(have.get(id)===prev[k])have.delete(id)});
@@ -1580,6 +1604,15 @@ setInterval(()=>{
   if(liveOn()&&!S.offline&&(S.phase==='race'||S.phase==='done')&&S.rid)orgPublish(true);
 },6000);
 setInterval(()=>hUpdate(false),50);
+// If live sync still isn't connected after 10 s, say why it might be (VPN, ad blocker, filtered Wi-Fi) instead of waiting silently.
+setInterval(()=>{
+  if(!liveOn())return;
+  const want=isH()?!!S.hinv:((S.phase==='race'||S.phase==='done')&&!!S.rid);
+  if(!want||FB.conn)return;
+  if(!LV.nc)LV.nc=Date.now();
+  if(Date.now()-LV.nc>10000&&!LV.ncs){LV.ncs=1;setFlash('Can’t reach live sync — turn off VPN or ad blocker, or try cellular')}
+  updLive();
+},2000);
 /*LIVE-END*/
 
 function mergeRunners(a,b){
