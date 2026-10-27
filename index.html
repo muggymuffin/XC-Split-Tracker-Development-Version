@@ -94,7 +94,7 @@ summary{cursor:pointer;margin:8px 0}
 <script src="jsQR.js"></script>
 <script>
 const $=s=>document.querySelector(s);
-function newLv(){return{hid:'',dirty:0,ver:0,sig:'',src:{},hts:{},orid:'',o:null}}
+function newLv(){return{hid:'',dirty:0,ver:0,sig:'',src:{},orid:'',o:null}}
 function loadOff(){try{return localStorage.getItem('rst-offline-v1')==='1'}catch(e){return false}}
 let S={phase:'setup',raceName:'',order:[],pred:[],marks:[],def:{label:'Marker 1',dist:''},total:'',unit:'mi',markers:[],cur:0,start:0,final:0,raf:0,nid:1,rid:'',epoch:0,flash:'',invRid:'',munit:'mi',tdraft:'',hinv:null,hsel:[],hm:[],hc:0,modal:null,draft:null,goals:{},lv:newLv(),offline:loadOff()};
 const M=()=>S.markers[S.cur];
@@ -1536,17 +1536,13 @@ function orgMerge(remote){
       const a=Array.from(e.a||[]),t=Array.from(e.t||[]),D=shiftOf(h);
       a.forEach((id,j)=>{if(t[j]!=null&&byId(id))pairs.push([+id,Math.max(0,Math.round(t[j]+D-S.epoch))])});
     }
-    applyHelper(L,pairs,key,h&&h.ts!=null?h.ts:null);
+    applyHelper(L,pairs,key);
   });
 }
 // Times a helper supplied earlier are swapped for their latest version (so a helper fixing the order or undoing a tap
 // carries through), but a time the organizer entered or edited themselves is never overwritten.
 // Helper order of timed runners is respected so rearranging after splits updates the organizer.
-function applyHelper(L,pairs,key,ts){
-  // Each helper upload carries a server timestamp. If it is the same upload we already merged, the helper has sent
-  // nothing new, so its copy is older than anything the organizer has done since (like reordering) and must not overwrite it.
-  if(!S.lv.hts)S.lv.hts={};
-  if(ts!=null){if(S.lv.hts[key]===ts)return;S.lv.hts[key]=ts}
+function applyHelper(L,pairs,key){
   const prev=S.lv.src[key]||{},have=new Map(),orig=new Map();
   L.actual.forEach((id,i)=>{if(L.laps[i]!=null){have.set(+id,L.laps[i]);orig.set(+id,L.laps[i])}});
   Object.keys(prev).forEach(k=>{const id=+k;if(have.get(id)===prev[k])have.delete(id)});
