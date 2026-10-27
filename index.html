@@ -200,6 +200,7 @@ function sortable(el,done){
   });
 }
 // Keep each runner's time on their id when the list is dragged, then put timed runners first in the new order.
+function srvNow(){return Date.now()+((typeof FB!=='undefined'&&FB.so)||0)}
 function reorderWithTimes(ids,actual,times){
   const timeById=new Map();
   for(let i=0;i<times.length;i++)if(times[i]!=null)timeById.set(+actual[i],times[i]);
@@ -327,8 +328,9 @@ function draw0(){
   <div class="bar"><button class="s" id="edr">Edit runners</button><button class="s" id="stop">Finish race</button></div>
   <div class="bar"><button class="s" id="inv">Invite helpers (QR)</button></div>`:''}`;
   sortable($('#act'),ids=>{
-    const r=reorderWithTimes(ids,m.actual,m.laps);
-    m.actual=r.actual;m.laps=r.times;m.touched=true;render();
+    // Places and times stay where they are; only the names move. rv stamps this arrangement so live sync knows it is the newest.
+    if(ids.length!==m.actual.length)return;
+    m.actual=ids.map(Number);m.rv=srvNow();m.touched=true;render();
   });
   a.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{const t=+b.dataset.t,k=S.markers[t];if(S.phase==='race'&&t>0&&!k.laps.length&&!k.touched)k.actual=[...S.markers[t-1].actual];S.cur=t;render()});
   a.querySelectorAll('[data-ti]').forEach(b=>b.onclick=()=>{const i=+b.dataset.ti;S.modal={type:'time',i,t:fmt(m.laps[i])};render()});
@@ -1084,8 +1086,8 @@ function drawHelper(){
   <div class="bar" style="margin-top:12px"><button class="s" id="hchg" ${ended?'disabled':''}>Change markers</button><button class="s" id="hend">End session</button></div>`;
   if(!ended){
     sortable($('#act'),ids=>{
-      const r=reorderWithTimes(ids,k.actual,k.taps);
-      k.actual=r.actual;k.taps=r.times;render();
+      if(ids.length!==k.actual.length)return;
+      k.actual=ids.map(Number);k.rv=srvNow();render();
     });
     $('#hlap').onclick=hlap;$('#hsort').onclick=hSort;
     $('#hundo').onclick=()=>{k.taps.pop();render()};
@@ -1231,7 +1233,7 @@ function liveTick(){
 // ---- helper side: upload ----
 function hCore(){
   const m={};
-  S.hm.forEach(k=>{if(k.taps.length)m['k'+k.idx]={a:k.actual.slice(0,k.taps.length),t:k.taps}});
+  S.hm.forEach(k=>{if(k.taps.length)m['k'+k.idx]={a:k.actual.slice(0,k.taps.length),t:k.taps,rv:k.rv||0}});
   return{m,A:S.hinv.A==null?null:Math.round(S.hinv.A)};
 }
 async function liveFlush(){
@@ -1259,7 +1261,7 @@ function oCore(){
   const g={};S.order.forEach(p=>{if(S.goals[p.id]>0)g[p.id]=S.goals[p.id]});
   return{ph:S.phase,ep:S.epoch,fin:Math.round(S.final||0),tot:S.total===''?null:S.total,u:S.unit,g,
     o:S.order.map(p=>[p.id,p.name]),
-    mk:S.markers.map(k=>[k.label,k.dist,k.unit||S.unit,k.actual,k.laps.map(x=>x==null?null:Math.round(x))])};
+    mk:S.markers.map(k=>[k.label,k.dist,k.unit||S.unit,k.actual,k.laps.map(x=>x==null?null:Math.round(x)),k.rv||0])};
 }
 // Sent as one JSON string so Firebase never reshapes the arrays; debounced, and re-sent after a reconnect.
 function orgPublish(force){
@@ -1347,7 +1349,7 @@ function withOrg(fn){
   const sv={markers:S.markers,goals:S.goals,total:S.total,unit:S.unit,cur:S.cur,phase:S.phase,start:S.start,final:S.final,order:S.order};
   const idx=S.hm[S.hc]?S.hm[S.hc].idx:0;
   try{
-    S.markers=o.mk.map(([label,dist,unit,actual,laps])=>({label,dist:dist==null?'':String(dist),unit,actual:actual||[],laps:laps||[]}));
+    S.markers=o.mk.map(([label,dist,unit,actual,laps,rv])=>({label,dist:dist==null?'':String(dist),unit,actual:actual||[],laps:laps||[],rv:rv||0}));
     S.goals=o.g||{};S.total=o.tot==null?'':String(o.tot);S.unit=o.u||'mi';
     S.cur=Math.max(0,Math.min(idx,S.markers.length-1));
     S.phase=o.ph==='race'?'race':'done';S.final=o.fin||0;
@@ -1394,6 +1396,20 @@ function hPullSplits(){
   withOrg(()=>{
     S.hm.forEach(k=>{
       const m=S.markers[k.idx];if(!m)return;
+      if((m.rv||0)>(k.rv||0)){
+        // The organizer rearranged this marker more recently than we did: take its order and its times as they are.
+        // (Places and times stay put; only names moved.) Splits we took that the organizer doesn't have yet keep their place.
+        const nt=[];
+        for(let i=0;i<m.laps.length&&m.laps[i]!=null;i++)nt.push(Math.round(+m.laps[i]-sh+ep));
+        const have=new Set(k.actual.map(Number)),na=m.actual.map(Number).filter(id=>have.has(id));
+        k.actual.forEach(id=>{if(!na.includes(+id))na.push(+id)});
+        k.actual=na;k.taps=[...nt,...k.taps.slice(nt.length)];k.rv=m.rv;ch=true;return;
+      }
+      if((k.rv||0)>(m.rv||0)){
+        // We rearranged more recently than the organizer knows: keep our order and times, and only pick up places the organizer has beyond ours.
+        for(let i=k.taps.length;i<m.laps.length&&m.laps[i]!=null&&i<k.actual.length;i++){k.taps.push(Math.round(+m.laps[i]-sh+ep));ch=true}
+        return;
+      }
       const remote=new Map(),remoteOrder=[];
       m.actual.forEach((id,i)=>{
         if(m.laps[i]==null)return;
@@ -1554,19 +1570,44 @@ function orgMerge(remote){
     const h=remote[hid],e=h&&h.m&&h.m[mk],pairs=[];
     if(e){
       const a=Array.from(e.a||[]),t=Array.from(e.t||[]),D=shiftOf(h);
-      a.forEach((id,j)=>{if(t[j]!=null&&byId(id))pairs.push([+id,Math.max(0,Math.round(t[j]+D-S.epoch))])});
+      a.forEach((id,j)=>{if(t[j]!=null&&byId(id))pairs.push([+id,Math.max(0,Math.round(t[j]+D-S.epoch)),j])});
     }
-    applyHelper(L,pairs,key,h&&h.ts!=null?h.ts:null);
+    applyHelper(L,pairs,key,h&&h.ts!=null?h.ts:null,e?+e.rv||0:0);
   });
 }
 // Times a helper supplied earlier are swapped for their latest version (so a helper fixing the order or undoing a tap
 // carries through), but a time the organizer entered or edited themselves is never overwritten.
 // Helper order of timed runners is respected so rearranging after splits updates the organizer.
-function applyHelper(L,pairs,key,ts){
+function applyHelper(L,pairs,key,ts,rv){
   // Each helper upload carries a server timestamp. If it is the same upload we already merged, the helper has sent
   // nothing new, so its copy is older than anything the organizer has done since (like reordering) and must not overwrite it.
   if(!S.lv.hts)S.lv.hts={};
   if(ts!=null){if(S.lv.hts[key]===ts)return;S.lv.hts[key]=ts}
+  rv=+rv||0;const lrv=+L.rv||0;
+  if(rv>lrv){
+    // The helper rearranged most recently: take its order and times exactly (places and times stay, names move).
+    // Times only the organizer has (for runners this helper didn't time) are kept after them.
+    const seen=new Set(),ids=[],laps=[],mineAll={};
+    pairs.forEach(([id,t])=>{id=+id;if(seen.has(id))return;seen.add(id);ids.push(id);laps.push(t);mineAll[id]=t});
+    const extra=[];L.actual.forEach((id,i)=>{id=+id;if(L.laps[i]!=null&&!seen.has(id))extra.push([id,L.laps[i]])});
+    extra.sort((a,b)=>a[1]-b[1]);
+    const rest=L.actual.map(Number).filter(id=>!seen.has(id)&&!extra.some(x=>x[0]===id));
+    pairs.forEach(([id])=>{id=+id;if(!rest.includes(id)&&!seen.has(id))rest.push(id)});
+    L.actual=[...ids,...extra.map(x=>x[0]),...rest];L.laps=[...laps,...extra.map(x=>x[1])];L.rv=rv;
+    S.lv.src[key]=mineAll;
+    return;
+  }
+  if(lrv>rv){
+    // The organizer rearranged more recently than this helper has caught up to. Don't let its older order or times win;
+    // only splits it took past what the organizer has are added, and they land in the next place (names follow the organizer's order).
+    const mine={};
+    pairs.slice().sort((a,b)=>(a[2]||0)-(b[2]||0)).forEach(([id,t,j])=>{
+      if(j==null||j!==L.laps.length||j>=L.actual.length)return;
+      L.laps.push(t);mine[+L.actual[j]]=t;
+    });
+    if(Object.keys(mine).length)S.lv.src[key]=Object.assign({},S.lv.src[key],mine);
+    return;
+  }
   const prev=S.lv.src[key]||{},have=new Map(),orig=new Map();
   L.actual.forEach((id,i)=>{if(L.laps[i]!=null){have.set(+id,L.laps[i]);orig.set(+id,L.laps[i])}});
   Object.keys(prev).forEach(k=>{const id=+k;if(have.get(id)===prev[k])have.delete(id)});
