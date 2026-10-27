@@ -875,7 +875,7 @@ function copyTable(d){
 }
 const getHist=()=>{try{return JSON.parse(localStorage.getItem('rst-history-v1')||'[]')}catch(e){return[]}};
 const histTitle=e=>new Date(e.epoch||e.saved).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+' · '+e.order.length+' runners';
-const snapOf=()=>({phase:S.phase,raceName:S.raceName||'',order:S.order,pred:S.pred,marks:S.marks,def:S.def,total:S.total,unit:S.unit,markers:S.markers,cur:S.cur,final:S.final,nid:S.nid,rid:S.rid,epoch:S.epoch,invRid:S.invRid,hinv:S.hinv,hsel:S.hsel,hm:S.hm,hc:S.hc,goals:S.goals,lv:S.lv,saved:Date.now()});
+const snapOf=()=>({phase:S.phase,raceName:S.raceName||'',order:S.order,pred:S.pred,marks:S.marks,def:S.def,total:S.total,unit:S.unit,markers:S.markers,cur:S.cur,final:S.final,nid:S.nid,rid:S.rid,epoch:S.epoch,invRid:S.invRid,hinv:S.hinv,hsel:S.hsel,hm:S.hm,hc:S.hc,goals:S.goals,lv:S.lv,lc:S.liveCleared?1:0,saved:Date.now()});
 function saveState(){
   if(!SAVE_OK)return;
   try{
@@ -889,7 +889,9 @@ function saveState(){
 }
 function loadSnap(o){
   cancelAnimationFrame(S.raf);
-  Object.assign(S,{phase:o.phase,raceName:o.raceName||'',order:o.order||[],pred:o.pred||[],marks:o.marks||[],def:o.def||{label:'Marker 1',dist:''},total:o.total||'',unit:o.unit||'mi',goals:o.goals||{},markers:o.markers||[],cur:Math.min(o.cur||0,Math.max(0,(o.markers||[]).length-1)),final:o.final||0,nid:o.nid||1,rid:o.rid||'',epoch:o.epoch||0,invRid:o.invRid||'',hinv:o.hinv||null,hsel:o.hsel||[],hm:o.hm||[],hc:o.hc||0,lv:Object.assign(newLv(),o.lv||{}),modal:null});
+  Object.assign(S,{phase:o.phase,raceName:o.raceName||'',order:o.order||[],pred:o.pred||[],marks:o.marks||[],def:o.def||{label:'Marker 1',dist:''},total:o.total||'',unit:o.unit||'mi',goals:o.goals||{},markers:o.markers||[],cur:Math.min(o.cur||0,Math.max(0,(o.markers||[]).length-1)),final:o.final||0,nid:o.nid||1,rid:o.rid||'',epoch:o.epoch||0,invRid:o.invRid||'',hinv:o.hinv||null,hsel:o.hsel||[],hm:o.hm||[],hc:o.hc||0,lv:Object.assign(newLv(),o.lv||{}),modal:null,liveCleared:!!o.lc});
+  // A finished race that is loaded back (after a restart, or from Saved races) is never re-published to the database.
+  LV.reap=o.phase==='done'?(o.rid||''):'';
   if(S.phase==='race')S.start=performance.now()-(Date.now()-S.epoch);
 }
 let SAVE_OK=false;
@@ -898,6 +900,8 @@ function restore(){
   if(!o||!o.phase){SAVE_OK=true;return}
   if(o.phase==='race'){S.pending=o;S.modal={type:'resume'};render();return}
   loadSnap(o);SAVE_OK=true;render();
+  // The race ended but its live data was never cleared (app closed too soon, or no connection): clear it now.
+  if(o.phase==='done'&&o.rid&&!o.lc)liveRemoveRace(o.rid).then(r=>{if(r.ok&&S.rid===o.rid){S.liveCleared=true;saveState()}});
 }
 function resumeModal(el){
   const o=S.pending,laps=(o.markers||[]).reduce((a,k)=>a+k.laps.filter(x=>x!=null).length,0);
@@ -912,6 +916,11 @@ function resumeModal(el){
     S.pending=null;S.modal=null;
     Object.assign(S,{phase:'setup',raceName:o.raceName||'',order:o.order||[],pred:[],marks:o.marks||[],def:o.def||{label:'Marker 1',dist:''},total:o.total||'',unit:o.unit||'mi',goals:o.goals||{},markers:[],cur:0,nid:o.nid||1,rid:'',epoch:0,final:0});
     SAVE_OK=true;render();setFlash('Race discarded — names kept');
+    if(o.rid)liveRemoveRace(o.rid).then(r=>{
+      if(r.ok)setFlash('Race discarded — names kept · live data cleared');
+      else if(r.why==='offline')setFlash('Race discarded — Offline mode is on, so its live data was not cleared');
+      else if(r.why==='error')setFlash('Race discarded — could not clear its live data');
+    });
   };
 }
 function creditsModal(el){
@@ -1265,7 +1274,7 @@ function oCore(){
 }
 // Sent as one JSON string so Firebase never reshapes the arrays; debounced, and re-sent after a reconnect.
 function orgPublish(force){
-  if(S.liveCleared)return;
+  if(S.liveCleared||(LV.reap&&LV.reap===S.rid))return;
   if(!hasLive())return;
   if(!(S.phase==='race'||S.phase==='done')||!S.rid||!FB.db||S.offline)return;
   const d=JSON.stringify(oCore());
@@ -1330,6 +1339,25 @@ async function orgCleanupRace(){
   saveState();
   setFlash('Race saved on this phone · live data cleared');
   updLive();
+}
+// Deletes one race's live data (organizer clock, helper splits) from the database. Used when a race is discarded, or
+// when a finished race was left behind without being cleared. Never throws; says why when it could not.
+async function liveRemoveRace(rid){
+  if(!rid||!fbOK())return{ok:false,why:'none'};
+  if(S.offline)return{ok:false,why:'offline'};
+  try{
+    if(!(await ensureFB()))return{ok:false,why:'error'};
+    if(FB.gone){FB.db.goOnline();FB.gone=0}
+    const wait=(p)=>Promise.race([p,new Promise((_,no)=>setTimeout(()=>no(new Error('timeout')),10000))]);
+    try{await wait(FB.db.ref('races/'+rid).remove())}
+    catch(e){
+      // Fallback if the rules only allow writes under h/*
+      const snap=await wait(FB.db.ref('races/'+rid+'/h').once('value'));
+      const u={};snap.forEach(c=>{u[c.key]=null});
+      if(Object.keys(u).length)await wait(FB.db.ref('races/'+rid+'/h').update(u));
+    }
+    return{ok:true};
+  }catch(e){return{ok:false,why:'error'}}
 }
 // helper phone's clock -> organizer's clock
 const hShift=()=>shiftCombine(S.hinv&&S.hinv.A!=null?+S.hinv.A:null,(HO.off!=null&&FB.so!=null)?(FB.so-HO.off):null);
